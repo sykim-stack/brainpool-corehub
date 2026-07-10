@@ -15,7 +15,9 @@ export function getSupabase() {
   }
 
   try {
-    supabaseInstance = createClient(url, key)
+    supabaseInstance = createClient(url, key, {
+      db: { schema: 'corehub' as any },
+    })
     return supabaseInstance
   } catch (error) {
     console.error('[corehub] Supabase init failed:', error)
