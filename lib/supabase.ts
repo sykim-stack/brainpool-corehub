@@ -1,4 +1,4 @@
-// lib/supabase.ts
+﻿// lib/supabase.ts
 import { createClient } from '@supabase/supabase-js'
 
 let supabaseInstance: ReturnType<typeof createClient> | null = null
@@ -15,9 +15,7 @@ export function getSupabase() {
   }
 
   try {
-    supabaseInstance = createClient(url, key, {
-      db: { schema: 'corehub' },
-    })
+    supabaseInstance = createClient(url, key)
     return supabaseInstance
   } catch (error) {
     console.error('[corehub] Supabase init failed:', error)
