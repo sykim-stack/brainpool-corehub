@@ -1,4 +1,0 @@
-{
-  "/api/corehub/opportunities/route": "app/api/corehub/opportunities/route.js",
-  "/api/corehub/facts/route": "app/api/corehub/facts/route.js"
-}
