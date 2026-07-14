@@ -4,17 +4,28 @@
 
 export const dynamic = 'force-dynamic'
 
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, PATCH, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+}
+
 async function handler(req) {
   const traceId = crypto.randomUUID()
-  const ctx = { req, traceId, _error: null }
+
+  // CORS preflight
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: CORS_HEADERS })
+  }
 
   const url = new URL(req.url)
   const id = url.searchParams.get('id')
+  const owner_key = url.searchParams.get('owner_key')
   const method = req.method
 
   const { getSupabase } = await import('@/lib/supabase')
   const supabase = getSupabase()
-  if (!supabase) return Response.json({ _error: 'supabase_init_failed', traceId }, { status: 500 })
+  if (!supabase) return Response.json({ _error: 'supabase_init_failed', traceId }, { status: 500, headers: CORS_HEADERS })
 
   if (method === 'GET') {
     if (id) {
@@ -24,12 +35,11 @@ async function handler(req) {
         .select('*')
         .eq('id', id)
         .single()
-      if (error || !data) return Response.json({ _error: 'opportunity_not_found', traceId }, { status: 500 })
-      return Response.json({ data, traceId })
+      if (error || !data) return Response.json({ _error: 'opportunity_not_found', traceId }, { status: 500, headers: CORS_HEADERS })
+      return Response.json({ data, traceId }, { headers: CORS_HEADERS })
     }
 
-    const owner_key = url.searchParams.get('owner_key')
-    if (!owner_key) return Response.json({ _error: 'owner_key_required', traceId }, { status: 500 })
+    if (!owner_key) return Response.json({ _error: 'owner_key_required', traceId }, { status: 500, headers: CORS_HEADERS })
 
     const { data, error } = await supabase
       .schema('corehub')
@@ -41,42 +51,43 @@ async function handler(req) {
       .order('priority', { ascending: false })
       .order('created_at', { ascending: false })
 
-    if (error) return Response.json({ _error: error.message, traceId }, { status: 500 })
-    return Response.json({ data, traceId })
+    if (error) return Response.json({ _error: error.message, traceId }, { status: 500, headers: CORS_HEADERS })
+    return Response.json({ data, traceId }, { headers: CORS_HEADERS })
   }
 
   if (method === 'PATCH') {
-    if (!id) return Response.json({ _error: 'id_required', traceId }, { status: 500 })
+    if (!id) return Response.json({ _error: 'id_required', traceId }, { status: 500, headers: CORS_HEADERS })
 
     const bodyText = await req.text()
     let body
     try { body = JSON.parse(bodyText) }
-    catch { return Response.json({ _error: 'invalid_json', traceId }, { status: 500 }) }
+    catch { return Response.json({ _error: 'invalid_json', traceId }, { status: 500, headers: CORS_HEADERS }) }
 
-    const { outcome, learning_log } = body
+    const { outcome, opportunity_id } = body
+    const targetId = opportunity_id || id
 
     const { data, error } = await supabase
       .schema('corehub')
       .from('opportunities')
       .update({ is_consumed: true, consumed_at: new Date().toISOString() })
-      .eq('id', id)
+      .eq('id', targetId)
       .select()
       .single()
 
-    if (error) return Response.json({ _error: error.message, traceId }, { status: 500 })
+    if (error) return Response.json({ _error: error.message, traceId }, { status: 500, headers: CORS_HEADERS })
 
-    if (learning_log || outcome) {
+    if (outcome) {
       await supabase
         .schema('corehub')
         .from('learning_logs')
-        .insert({ opportunity_id: id, outcome: outcome || null })
+        .insert({ opportunity_id: targetId, outcome })
     }
 
-    console.log(`[corehub/opportunities] consumed id=${id} outcome=${outcome}`)
-    return Response.json({ data, traceId })
+    console.log(`[corehub/opportunities] consumed id=${targetId} outcome=${outcome}`)
+    return Response.json({ data, traceId }, { headers: CORS_HEADERS })
   }
 
-  return Response.json({ _error: 'method_not_allowed', traceId }, { status: 500 })
+  return Response.json({ _error: 'method_not_allowed', traceId }, { status: 500, headers: CORS_HEADERS })
 }
 
-export { handler as GET, handler as PATCH }
+export { handler as GET, handler as PATCH, handler as OPTIONS }
