@@ -1,4 +1,4 @@
-// CoreHub - Facts API
+﻿// CoreHub - Facts API
 // Core들이 Fact를 전달하는 수집 엔드포인트
 // POST → Fact 저장 + Connection 탐지 트리거
 // GET  → Fact 조회
@@ -209,7 +209,7 @@ const generateOpportunity = async (supabase, meaning) => {
       priority: opportunity.priority,
       action_type: opportunity.action_type,
       payload: opportunity.payload,
-      expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      expires_at: new Date(Date.now() + (opportunity.expires_hours || 24) * 60 * 60 * 1000).toISOString(),
     })
 
   console.log(`[corehub/opportunity] created type=${opportunity.opportunity_type}`)
