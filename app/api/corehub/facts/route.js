@@ -94,13 +94,15 @@ const detectConnections = async (supabase, newFact) => {
 
   const patterns = [
     {
+      // 1순위: 씨앗 → 열매 달성 (fruit 있으면 abandonment보다 우선)
       match: (types) =>
         types.includes('space.seed.created') &&
-        !types.includes('space.room.visited'),
-      connection_type: 'seed.abandonment.risk',
-      strength: 0.7,
+        types.includes('space.fruit.created'),
+      connection_type: 'seed.to.fruit.achieved',
+      strength: 0.95,
     },
     {
+      // 2순위: 번역 + 채팅 → 언어 다른 관계 형성
       match: (types) =>
         types.includes('language.translated') &&
         types.includes('relation.chat.sent'),
@@ -108,11 +110,13 @@ const detectConnections = async (supabase, newFact) => {
       strength: 0.8,
     },
     {
+      // 3순위: 씨앗 생성 후 방문/열매 없음 → 포기 위험
       match: (types) =>
         types.includes('space.seed.created') &&
-        types.includes('space.fruit.created'),
-      connection_type: 'seed.to.fruit.achieved',
-      strength: 0.95,
+        !types.includes('space.room.visited') &&
+        !types.includes('space.fruit.created'),
+      connection_type: 'seed.abandonment.risk',
+      strength: 0.7,
     },
   ]
 
@@ -139,6 +143,8 @@ const detectConnections = async (supabase, newFact) => {
         console.log(`[corehub/connect] detected type=${pattern.connection_type} strength=${pattern.strength}`)
         await generateMeaning(supabase, connection, matchedFacts)
       }
+
+      break // 첫 번째 매칭 패턴만 처리
     }
   }
 }
