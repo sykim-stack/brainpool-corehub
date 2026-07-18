@@ -26,7 +26,6 @@ const handlePost = async (req, traceId) => {
   const supabase = getSupabase()
   if (!supabase) return Response.json({ _error: 'supabase_init_failed', traceId }, { status: 500 })
 
-  // corehub 스키마 직접 지정
   const { data: fact, error } = await supabase
     .schema(SCHEMA)
     .from('facts')
@@ -181,18 +180,21 @@ const generateOpportunity = async (supabase, meaning) => {
       action_type: 'trigger.hajunai.nudge',
       priority: 'high',
       payload: { message: '씨앗이 기다리고 있어요' },
+      expires_hours: 24,
     },
     'new.relationship.forming': {
       opportunity_type: 'suggest.translation.help',
       action_type: 'suggest.corering',
       priority: 'medium',
       payload: { message: '번역 도움이 필요하신가요?' },
+      expires_hours: 48,
     },
     'goal.achieved': {
       opportunity_type: 'celebrate.achievement',
       action_type: 'trigger.hajunai.celebrate',
       priority: 'high',
       payload: { message: '씨앗이 열매가 됐어요 🍎' },
+      expires_hours: 72,
     },
   }
 
@@ -209,10 +211,10 @@ const generateOpportunity = async (supabase, meaning) => {
       priority: opportunity.priority,
       action_type: opportunity.action_type,
       payload: opportunity.payload,
-      expires_at: new Date(Date.now() + (opportunity.expires_hours || 24) * 60 * 60 * 1000).toISOString(),
+      expires_at: new Date(Date.now() + opportunity.expires_hours * 60 * 60 * 1000).toISOString(),
     })
 
-  console.log(`[corehub/opportunity] created type=${opportunity.opportunity_type}`)
+  console.log(`[corehub/opportunity] created type=${opportunity.opportunity_type} expires_hours=${opportunity.expires_hours}`)
 }
 
 export { handler as GET, handler as POST }
