@@ -4,6 +4,8 @@
 > 스택: Next.js 14.2.x + TypeScript + Supabase (공유 DB)
 > 배포: Vercel Hobby (sykim-stack org)
 
+> **주의:** 이 파일은 초기 구상 문서이며 인증/Fact 처리 계약은 현재 구현과 다릅니다. 실행 기준은 [CoreHub event processing v2](CoreHub%20event%20processing%20v2.md)입니다. 특히 아래 `owner_key` 인증 및 fire-and-forget 예시는 더 이상 사용하지 않습니다.
+
 ---
 
 ## 1. 레포 구조
