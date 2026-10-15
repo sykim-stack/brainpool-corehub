@@ -65,14 +65,26 @@ PR 본문에 적힌 수동 검증을 staging 또는 disposable PostgreSQL 16에�
 
 ## 3. CoreNull 연동 게이트
 
+- [ ] CoreNull 현재 구현 조사: `owner_key`/`device_id` 경로와 Auth UID 경로를 분리 확인
+- [ ] 기존 `device_id`를 Auth UID로 자동 승격하지 않는 신규 House 경로 확인
+- [ ] CoreNull House API의 오류 계약을 CoreHub의 `401/403/409/503` 계약과 정렬
+- [ ] CoreNull 실제 domain version 반환 경로와 전송 worker가 확인되기 전 실데이터 연결 금지
+- [ ] 워커 인증 모델을 ADR로 결정: 사용자 위임 토큰 또는 승인된 서비스 간 인증
+- [ ] `service_role`을 사용자 인증의 대체물로 사용하지 않음
+- [ ] 사용자 access token 저장·갱신·폐기·사용자별 격리 방식을 검토
 - [ ] 신규 CoreNull house 생성 시 서버가 Supabase Auth UID를 `corenull.houses.owner_id`에 기록
 - [ ] 클라이언트가 제출한 owner UID를 저장하지 않음
 - [ ] CoreNull 도메인 변경과 outbox 삽입이 하나의 DB 트랜잭션으로 묶임
-- [ ] outbox `idempotency_key` 생성 규칙이 안정적이고 문서화됨
+- [ ] 도메인 update가 정확히 한 행을 변경하고 실제 확정 version을 반환함
+- [ ] outbox `idempotency_key`가 실제 확정 version에서 생성되며 규칙이 문서화됨
+- [ ] canonical JSON 및 payload hash 계산 규칙이 고정됨
+- [ ] 동일 key·동일 hash는 중복으로 처리하고, 다른 hash는 conflict 감사 행을 남김
 - [ ] 워커가 `Authorization: Bearer <access_token>`와 동일 key를 사용함
 - [ ] request body에 owner 필드를 넣지 않음
 - [ ] `200/201`은 sent, `503/5xx`·네트워크 오류는 backoff 재시도
-- [ ] `409`는 quarantine/알림 처리하며 key 재생성 또는 payload 덮어쓰기를 하지 않음
+- [ ] `401/403/409`와 재시도 상한 초과는 `quarantined`로 전환함
+- [ ] `quarantined` 행은 자동 claim 대상에 포함되지 않음
+- [ ] 각 claim마다 새 `lease_token`을 발급하고 성공·실패 갱신에서 token을 검증함
 - [ ] lease 만료 행을 재claim하는 복구 절차가 검증됨
 - [ ] CoreNull 연동 전까지 house-scoped CoreHub 트래픽이 0인지 확인
 
