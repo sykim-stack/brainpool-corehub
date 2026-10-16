@@ -2,7 +2,7 @@
 
 - 검증일: 2026-10-16
 - 브랜치: `security/corehub-event-integrity-2026-10-05`
-- HEAD: `e68929c`
+- HEAD: `e510f18`
 - PR: #2, draft, base `main`
 
 ## 결과 요약
@@ -63,7 +63,8 @@ CoreNull에는 아직 domain mutation과 원자적으로 기록되는 outbox, cl
 로컬 테스트는 RPC와 실제 RLS/권한 경계를 호출하지 않는다. staging fixture를 지정한 뒤 다음을 별도로 확인해야 한다.
 
 - `process_fact_event`의 transaction/idempotency 동작
-- `corehub.facts`와 `corenull.houses`의 schema 권한
+- `corehub.facts`와 제안된 canonical `public.corenull_houses`의 schema 권한
+- brainpool-os [ADR-IDENTITY-OWNERSHIP-001](https://github.com/sykim-stack/brainpool-os/pull/1)의 사람 승인 여부와 CoreHub route query 정렬
 - Auth UID와 House owner mapping
 - 동일 key의 동일/상이한 body 처리
 - RPC 실패 시 503과 worker retry 상호작용
