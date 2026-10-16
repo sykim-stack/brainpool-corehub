@@ -11,9 +11,26 @@ CoreNull에는 Google 로그인 진입점은 있지만, 현재 구현은 Supabas
 
 House와 대부분의 도메인 API는 여전히 localStorage의 `owner_key`를 요청 본문/query에 넣고, 서버가 service-role 클라이언트로 그 값을 `corenull_houses.owner_key`와 비교한다. `corenull_houses.owner_id`는 확인되지 않았다.
 
-Fact 전달은 `rooms/route.js`와 `posts/route.js`에서 CoreHub URL로 직접 fire-and-forget `fetch`하는 방식이다. `Authorization`, `Idempotency-Key`, durable outbox, retry/backoff, lease, payload hash가 없다. 실제 도메인 테이블에는 `version` 컬럼이 확인되지 않았고, `created_at`/`updated_at`만 존재한다.
+CoreHub PR #2의 Facts consumer는 반대로 Bearer access token, Auth UID 유도, House ownership, Idempotency-Key, 401/403/409/503 계약을 구현하고 있다. 문제는 CoreNull producer가 아직 이 계약을 충족하지 않는다는 점이다. CoreNull의 Fact 전달은 `rooms/route.js`와 `posts/route.js`에서 CoreHub URL로 직접 fire-and-forget `fetch`하는 방식이며, `Authorization`, `Idempotency-Key`, durable outbox, retry/backoff, lease, payload hash가 없다. 실제 도메인 테이블에는 `version` 컬럼이 확인되지 않았고, `created_at`/`updated_at`만 존재한다.
 
 따라서 지금은 outbox migration이나 worker를 staging에도 적용할 구현물이 아직 없으며, 운영 연결을 진행할 수 없다. 먼저 Auth 계약과 신규 House 소유권 경로를 정하고, 도메인 version 또는 명시적 이벤트 revision을 도입한 뒤, staging에서만 통합 검증해야 한다.
+
+## 2.1 CoreHub PR #2 계약 대조
+
+PR #2의 현재 브랜치(`security/corehub-event-integrity-2026-10-05`, draft)는 Facts API consumer 계약을 구현한다. 따라서 위험은 “CoreHub API 개방”이 아니라 “CoreNull producer와 CoreHub consumer의 계약 불일치”로 기록해야 한다.
+
+| 상황 | PR #2 실제 동작 | 근거 |
+|---|---|---|
+| Bearer 없음 | `401 authentication_required` | `app/api/corehub/facts/route.js:16-23`; `lib/corehub/auth.mjs:10-13` |
+| 잘못된 token | `401 invalid_access_token` | `lib/corehub/auth.mjs:15-30` |
+| Auth service 장애 | `503 authentication_service_unavailable` | `lib/corehub/auth.mjs:19-24, 31-32` |
+| House ownership 불일치 | `403 house_not_owned_by_user` | `app/api/corehub/facts/route.js:121-134` |
+| Idempotency-Key 없음/오류 | `400 valid_idempotency_key_required` | `app/api/corehub/facts/route.js:76-80` |
+| 동일 key·동일 event | `200` duplicate 결과 | `app/api/corehub/facts/route.js:148-156` |
+| 동일 key·다른 event | `409 idempotency_key_reused_with_different_event` | `app/api/corehub/facts/route.js:148-150` |
+| RPC 처리 장애 | `503 fact_processing_failed_retry_with_same_key` | `app/api/corehub/facts/route.js:151-153` |
+
+CoreNull의 현재 `pushFact()`에는 Bearer와 Idempotency-Key가 없으므로 현재 direct push는 이 계약을 만족하지 않는다.
 
 ## 2. Auth·세션 조사
 
@@ -137,7 +154,7 @@ CoreNull 저장소에서 `worker`, `queue`, `cron`, `outbox`, `idempotency`, `ba
 
 현재 사실만으로는 사용자 위임 token 방식은 실행할 수 없다. CoreNull이 브라우저 세션/access token을 유지하거나 워커에 안전하게 전달하는 계약이 없기 때문이다.
 
-따라서 **서비스 간 인증을 우선 후보로 권고**한다. 단, 이는 사용자의 승인을 거쳐야 하는 ADR 결정이며 아직 승인된 사항이 아니다. CoreHub 쪽에는 다음 계약 변경이 필요하다.
+따라서 **서비스 간 인증을 우선 후보로 권고**한다. 단, 이는 사용자의 승인을 거쳐야 하는 ADR 결정이며 아직 승인된 사항이 아니다. CoreHub PR #2에는 사용자 Bearer 계약이 이미 구현되어 있다. 서비스 간 인증을 선택할 경우에만 별도 service-auth 경로와 ownership assertion 검증을 추가해야 한다.
 
 - CoreNull worker의 mTLS 또는 HMAC 서명 검증
 - 서명된 claim의 `owner_id`, `house_id`, `source`, `idempotency_key`, `payload_sha256`, timestamp/nonce 검증
@@ -149,7 +166,7 @@ CoreNull 저장소에서 `worker`, `queue`, `cron`, `outbox`, `idempotency`, `ba
 
 ## 7. Staging readiness
 
-현재는 **staging E2E 실행 불가** 판정이다. 이유는 다음과 같다.
+현재는 **CoreNull→CoreHub staging E2E 실행 불가** 판정이다. CoreHub PR #2 자체의 consumer-side unit/integration 검증과는 구분한다. 이유는 다음과 같다.
 
 - CoreNull에 outbox migration이 없음
 - CoreNull에 worker가 없음

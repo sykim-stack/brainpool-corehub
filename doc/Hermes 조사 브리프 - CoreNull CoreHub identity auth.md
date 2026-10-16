@@ -199,7 +199,7 @@ CoreNull에서 발생한 실제 도메인 이벤트를 CoreHub로 안전하게 �
 
 ## 5. CoreHub 계약과 대조
 
-현재 CoreHub PR #2 기준으로 다음 계약을 실제 코드와 대조한다.
+현재 CoreHub PR #2는 다음 consumer 계약을 실제 코드로 구현하고 있다. 조사자는 “CoreHub가 개방되어 있음”이라고 기록하지 말고, CoreNull producer가 이 계약을 충족하는지 대조한다.
 
 | 상황 | 기대 응답 | 확인 파일/줄 | 실제 결과 | 불일치 조치 |
 |---|---:|---|---|---|
@@ -208,7 +208,7 @@ CoreNull에서 발생한 실제 도메인 이벤트를 CoreHub로 안전하게 �
 | 동일 key·동일 body | 200 duplicate |  |  |  |
 | 동일 key·다른 body | 409 |  |  |  |
 | 일시적 RPC/Auth 장애 | 503 |  |  |  |
-| 서비스 인증 실패 | 401 |  |  |  |
+| 서비스 인증 실패 | 별도 service-auth 경로를 선택한 경우에만 정의 |  | 현재 PR #2는 사용자 Bearer 경로 | ADR 필요 |
 
 `traceId`는 관측용 correlation ID이며, 이벤트 idempotency key로 사용하지 않는다.
 
@@ -266,7 +266,7 @@ CoreNull에서 발생한 실제 도메인 이벤트를 CoreHub로 안전하게 �
 
 ## 8. 현재 조사에 대한 예상 결론 템플릿
 
-다음 문장은 증거 확인 후에만 확정한다.
+다음 문장은 증거 확인 후에만 확정한다. CoreHub PR #2 consumer 계약의 구현 여부와 CoreNull producer의 호환 여부를 분리해서 기록한다.
 
 > 현재 CoreNull은 `owner_key`/`device_id` 기반이며 Supabase Auth UID 기반 House ownership과 durable outbox worker가 없다. CoreHub는 검증된 Auth UID를 요구하므로 현재 direct pushFact 경로는 운영 연결에 사용할 수 없다. 먼저 Identity mapping, 신규 House owner_id, worker 인증, domain revision, staging outbox를 확정하고 검증해야 한다. 운영 DB와 레거시 데이터는 별도 승인 전까지 변경하지 않는다.
 
