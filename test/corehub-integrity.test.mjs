@@ -113,7 +113,7 @@ test('Supabase Auth user ID comes from verified token, not request data', async 
   assert.deepEqual(result, { ok: true, userId: ownerA })
 })
 
-test('House ownership query uses the canonical public CoreNull table and verified UID', async () => {
+test('House ownership query uses the canonical corenull.houses table and verified UID', async () => {
   const calls = []
   const builder = {
     select(fields) { calls.push(['select', fields]); return this },
@@ -121,13 +121,15 @@ test('House ownership query uses the canonical public CoreNull table and verifie
     async maybeSingle() { calls.push(['maybeSingle']); return { data: { id: houseA }, error: null } },
   }
   const supabase = {
+    schema(name) { calls.push(['schema', name]); return this },
     from(table) { calls.push(['from', table]); return builder },
   }
 
   const result = await ownedHouseQuery(supabase, houseA, ownerA)
   assert.deepEqual(result, { data: { id: houseA }, error: null })
   assert.deepEqual(calls, [
-    ['from', 'corenull_houses'],
+    ['schema', 'corenull'],
+    ['from', 'houses'],
     ['select', 'id'],
     ['eq', 'id', houseA],
     ['eq', 'owner_id', ownerA],

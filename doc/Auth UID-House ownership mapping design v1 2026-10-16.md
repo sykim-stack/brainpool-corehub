@@ -3,21 +3,21 @@
 - 상태: **Draft — 승인 전**
 - 기준일: 2026-10-16
 - 운영 DB 적용: 금지
-- canonical 선택 제안: **`public.corenull_houses` 유지 + nullable `owner_id` 추가**
+- canonical 선택: **기존 `corenull.houses`와 `owner_id` 유지**
 
 ## 1. canonical 계약
 
 CoreNull의 실제 도메인 테이블을 canonical House table로 유지한다.
 
 ```text
-public.corenull_houses.id          = House ID
-public.corenull_houses.owner_id    = verified Supabase auth.users.id, nullable
-public.corenull_houses.owner_key   = legacy CoreNull identifier, preserved
+corenull.houses.id          = House ID
+corenull.houses.owner_id    = verified Supabase auth.users.id, nullable
+corenull.houses.owner_key   = legacy CoreNull identifier, preserved
 ```
 
 `owner_id IS NULL`은 **미연결 House**를 의미한다. NULL을 임의 사용자와 연결하거나 `owner_key`를 UUID라는 이유만으로 Auth UID로 해석하지 않는다.
 
-CoreHub PR #2의 현재 `.schema('corenull').from('houses').eq('owner_id', userId)` query는 canonical table에 맞춰 별도 수정해야 한다. 두 개의 House table을 만들어 복제하는 방식은 drift를 만들 수 있으므로 채택하지 않는다.
+CoreHub PR #2의 `.schema('corenull').from('houses').eq('owner_id', userId)` query는 실제 canonical table과 일치한다. 두 개의 House table을 만들어 복제하는 방식은 drift를 만들 수 있으므로 채택하지 않는다.
 
 ## 2. Identity mapping 계약
 
@@ -72,11 +72,11 @@ CoreHub PR #2의 현재 `.schema('corenull').from('houses').eq('owner_id', userI
 CoreHub Facts API는 다음 순서로 처리해야 한다.
 
 1. Bearer token에서 `user.id` 검증
-2. canonical `public.corenull_houses`에서 `id = house_id AND owner_id = user.id` 확인
+2. canonical `corenull.houses`에서 `id = house_id AND owner_id = user.id` 확인
 3. 실패 시 `403`
 4. 성공 후 `corehub.process_fact_event(p_owner_id = user.id, ...)` 실행
 
-현재 PR #2의 `corenull.houses` 참조는 이 계약과 맞지 않으므로, staging migration보다 먼저 route/schema 계약을 정렬해야 한다.
+현재 PR #2의 `corenull.houses` 참조는 실제 schema와 일치한다. staging에서는 House column을 추가하지 않고, 기존 `public.corenull_owner_identities`에 Auth UID 연결 컬럼만 확장한다.
 
 ## 7. 승인 전 금지사항
 

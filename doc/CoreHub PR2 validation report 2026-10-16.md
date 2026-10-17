@@ -63,7 +63,8 @@ CoreNull에는 아직 domain mutation과 원자적으로 기록되는 outbox, cl
 로컬 테스트는 RPC와 실제 RLS/권한 경계를 호출하지 않는다. staging fixture를 지정한 뒤 다음을 별도로 확인해야 한다.
 
 - `process_fact_event`의 transaction/idempotency 동작
-- `corehub.facts`와 canonical `public.corenull_houses`의 schema 권한
+- `corehub.facts`와 canonical `corenull.houses`의 schema 권한
+- 기존 `corenull.houses.owner_id` FK 및 `public.corenull_owner_identities` Auth UID 확장 migration 검증
 - brainpool-os [ADR-IDENTITY-OWNERSHIP-001](https://github.com/sykim-stack/brainpool-os/pull/1)의 사람 승인 여부
 - Auth UID와 House owner mapping
 - 동일 key의 동일/상이한 body 처리
@@ -74,7 +75,7 @@ CoreNull에는 아직 domain mutation과 원자적으로 기록되는 outbox, cl
 다음 순서가 완료되기 전에는 운영 Fact 송신을 시작하지 않는다.
 
 1. CoreNull Auth UID와 House ownership 계약 승인
-2. staging `public.corenull_houses.owner_id` migration 적용 및 route schema 검증
+2. staging `public.corenull_owner_identities.auth_user_id` migration 적용 및 기존 `corenull.houses.owner_id` route schema 검증
 3. domain revision/event sequence와 stable idempotency key 승인
 4. CoreNull outbox migration과 worker 구현
 5. 별도 staging Supabase/CoreHub endpoint 및 test fixture 지정

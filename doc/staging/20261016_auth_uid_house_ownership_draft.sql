@@ -1,3 +1,5 @@
+-- SUPERSEDED — DO NOT APPLY
+-- Use 20261018_auth_uid_identity_mapping_existing_schema.sql instead.
 -- DRAFT ONLY — DO NOT APPLY TO PRODUCTION
 -- Purpose: staging-only Auth UID ↔ House ownership contract.
 -- Canonical table: public.corenull_houses.
