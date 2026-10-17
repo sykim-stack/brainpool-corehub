@@ -1,8 +1,8 @@
 # CoreHub PR #2 검증 보고서
 
-- 검증일: 2026-10-16
+- 검증일: 2026-10-18 보완
 - 브랜치: `security/corehub-event-integrity-2026-10-05`
-- HEAD: `e510f18`
+- HEAD: `7378f97`
 - PR: #2, draft, base `main`
 
 ## 결과 요약
@@ -11,7 +11,7 @@ CoreHub PR #2의 로컬 테스트와 production build는 통과했다. Vercel Pr
 
 | 검증 항목 | 결과 | 비고 |
 |---|---|---|
-| `npm test` | PASS | 11 tests passed, 0 failed |
+| `npm test` | PASS | 12 tests passed, 0 failed |
 | `npm run build` | PASS | Next.js 15.5.27 production build |
 | `git diff --check` | PASS | whitespace 오류 없음 |
 | Vercel Preview Comments | SUCCESS | PR status check |
@@ -19,6 +19,8 @@ CoreHub PR #2의 로컬 테스트와 production build는 통과했다. Vercel Pr
 | Vercel brainpool-corehub-frhk | SUCCESS | PR status check |
 | CoreNull staging producer → CoreHub staging E2E | NOT RUN | CoreNull outbox/worker/Auth UID 계약 미구현 |
 | 실제 Supabase `process_fact_event` RPC 검증 | NOT RUN | staging project/fixture 미지정 |
+
+상세 검토 결과는 [CoreHub PR2 integration and outbox review 2026-10-18](./CoreHub%20PR2%20integration%20and%20outbox%20review%202026-10-18.md)에 기록했다. 결론은 consumer-side 검증 PASS, CoreNull producer·durable outbox·worker·staging E2E NOT RUN이다.
 
 ## 통과한 로컬 테스트 범위
 
