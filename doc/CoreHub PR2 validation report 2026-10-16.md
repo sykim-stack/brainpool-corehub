@@ -63,8 +63,8 @@ CoreNull에는 아직 domain mutation과 원자적으로 기록되는 outbox, cl
 로컬 테스트는 RPC와 실제 RLS/권한 경계를 호출하지 않는다. staging fixture를 지정한 뒤 다음을 별도로 확인해야 한다.
 
 - `process_fact_event`의 transaction/idempotency 동작
-- `corehub.facts`와 제안된 canonical `public.corenull_houses`의 schema 권한
-- brainpool-os [ADR-IDENTITY-OWNERSHIP-001](https://github.com/sykim-stack/brainpool-os/pull/1)의 사람 승인 여부와 CoreHub route query 정렬
+- `corehub.facts`와 canonical `public.corenull_houses`의 schema 권한
+- brainpool-os [ADR-IDENTITY-OWNERSHIP-001](https://github.com/sykim-stack/brainpool-os/pull/1)의 사람 승인 여부
 - Auth UID와 House owner mapping
 - 동일 key의 동일/상이한 body 처리
 - RPC 실패 시 503과 worker retry 상호작용
@@ -74,12 +74,13 @@ CoreNull에는 아직 domain mutation과 원자적으로 기록되는 outbox, cl
 다음 순서가 완료되기 전에는 운영 Fact 송신을 시작하지 않는다.
 
 1. CoreNull Auth UID와 House ownership 계약 승인
-2. domain revision/event sequence와 stable idempotency key 승인
-3. CoreNull outbox migration과 worker 구현
-4. 별도 staging Supabase/CoreHub endpoint 및 test fixture 지정
-5. CoreNull producer → CoreHub PR #2 E2E 실행
-6. duplicate, 409, 401/403, 503, lease expiry, stale completion 검증
-7. 결과 검토 후 운영 migration/worker 배포를 별도 승인
+2. staging `public.corenull_houses.owner_id` migration 적용 및 route schema 검증
+3. domain revision/event sequence와 stable idempotency key 승인
+4. CoreNull outbox migration과 worker 구현
+5. 별도 staging Supabase/CoreHub endpoint 및 test fixture 지정
+6. CoreNull producer → CoreHub PR #2 E2E 실행
+7. duplicate, 409, 401/403, 503, lease expiry, stale completion 검증
+8. 결과 검토 후 운영 migration/worker 배포를 별도 승인
 
 ## 판정
 

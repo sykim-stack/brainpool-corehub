@@ -73,7 +73,8 @@ PR 본문에 적힌 수동 검증을 staging 또는 disposable PostgreSQL 16에�
 - [ ] `service_role`을 사용자 인증의 대체물로 사용하지 않음
 - [ ] 사용자 access token 저장·갱신·폐기·사용자별 격리 방식을 검토
 - [ ] 신규 CoreNull house 생성 시 서버가 Supabase Auth UID를 제안된 canonical `public.corenull_houses.owner_id`에 기록
-- [ ] brainpool-os `ADR-IDENTITY-OWNERSHIP-001`이 사람 승인되고 CoreHub route의 현재 `corenull.houses` 참조가 canonical table과 정렬됨
+- [ ] brainpool-os `ADR-IDENTITY-OWNERSHIP-001`이 사람 승인되고 CoreHub route가 canonical `public.corenull_houses`를 조회함
+- [ ] `public.corenull_houses.owner_id` staging migration과 Auth UID fixture 검증이 완료되기 전 house-scoped 송신이 차단됨
 - [ ] 클라이언트가 제출한 owner UID를 저장하지 않음
 - [ ] CoreNull 도메인 변경과 outbox 삽입이 하나의 DB 트랜잭션으로 묶임
 - [ ] 도메인 update가 정확히 한 행을 변경하고 실제 확정 version을 반환함

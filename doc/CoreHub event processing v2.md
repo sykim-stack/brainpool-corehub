@@ -8,9 +8,9 @@
 
 - Facts와 Opportunities API는 `Authorization: Bearer <Supabase access token>`을 필수로 받는다.
 - API는 `supabase.auth.getUser(token)`으로 토큰을 검증하고 owner UID를 서버에서 얻는다. Request body/query의 `owner_id`나 `owner_key`는 권한 근거로 받지 않는다.
-- 새 Fact에 `house_id`가 있으면 제안된 canonical table `public.corenull_houses.id = house_id AND owner_id = auth user UID`인 경우에만 수락한다. 기존 집이 Auth 계정에 연결되지 않았으면 403으로 거절한다. 이 canonical 선택은 brainpool-os `ADR-IDENTITY-OWNERSHIP-001`의 Proposed 상태이며, 현재 route의 `corenull.houses` 참조는 승인 후 정렬해야 한다.
+- 새 Fact에 `house_id`가 있으면 canonical table `public.corenull_houses.id = house_id AND owner_id = auth user UID`인 경우에만 수락한다. 기존 집이 Auth 계정에 연결되지 않았으면 403으로 거절한다. route는 이 table을 조회하도록 정렬되었지만, `owner_id` staging migration과 brainpool-os `ADR-IDENTITY-OWNERSHIP-001` 승인 전에는 house-scoped 송신을 운영에서 열지 않는다.
 - `corehub` 테이블은 RLS를 켜고 `auth.uid()`와 일치하는 행만 authenticated 역할에 SELECT 허용한다. 클라이언트 직접 쓰기는 허용하지 않는다. RPC 실행은 비밀 `SUPABASE_SERVICE_ROLE_KEY`를 사용하는 서버만 가능하다.
-- 현재 CoreNull API/UI는 `owner_key` URL capability와 브라우저 `device_id`를 사용한다. Supabase Auth 통합 및 새 house `owner_id` 기록이 아직 없으므로, 해당 source가 Auth token을 전달하도록 별도로 연결되기 전까지 house-scoped CoreHub 이벤트는 사용할 수 없다. 소유권 검증을 완화해 우회하지 않는다.
+- 현재 CoreNull API/UI는 `owner_key` URL capability와 브라우저 `device_id`를 사용한다. Supabase Auth 통합 및 새 House `owner_id` 기록이 아직 없으므로, 해당 source가 Auth token을 전달하고 staging migration을 통과하기 전까지 house-scoped CoreHub 이벤트는 사용할 수 없다. 소유권 검증을 완화해 우회하지 않는다.
 
 ## 2. Fact 요청 계약
 

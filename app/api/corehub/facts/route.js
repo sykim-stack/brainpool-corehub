@@ -1,4 +1,5 @@
 ﻿import { authenticateUser } from '@/lib/corehub/auth.mjs'
+import { ownedHouseQuery } from '@/lib/corehub/houseOwnership.mjs'
 
 export const dynamic = 'force-dynamic'
 
@@ -119,13 +120,7 @@ async function handlePost(req, traceId, { supabase, userId }) {
   }
 
   if (houseId) {
-    const { data: house, error: houseError } = await supabase
-      .schema('corenull')
-      .from('houses')
-      .select('id')
-      .eq('id', houseId)
-      .eq('owner_id', userId)
-      .maybeSingle()
+    const { data: house, error: houseError } = await ownedHouseQuery(supabase, houseId, userId)
     if (houseError) {
       console.error('[corehub/facts] house ownership check failed', traceId, houseError.code)
       return jsonError('ownership_check_failed', traceId, 500)

@@ -6,6 +6,7 @@ import {
   opportunityForMeaning,
 } from '../lib/corehub/matching.mjs'
 import { authenticateUser, getBearerToken } from '../lib/corehub/auth.mjs'
+import { ownedHouseQuery } from '../lib/corehub/houseOwnership.mjs'
 
 const ownerA = 'auth-user-a'
 const ownerB = 'auth-user-b'
@@ -110,6 +111,28 @@ test('Supabase Auth user ID comes from verified token, not request data', async 
   )
   assert.equal(receivedToken, 'token-1')
   assert.deepEqual(result, { ok: true, userId: ownerA })
+})
+
+test('House ownership query uses the canonical public CoreNull table and verified UID', async () => {
+  const calls = []
+  const builder = {
+    select(fields) { calls.push(['select', fields]); return this },
+    eq(field, value) { calls.push(['eq', field, value]); return this },
+    async maybeSingle() { calls.push(['maybeSingle']); return { data: { id: houseA }, error: null } },
+  }
+  const supabase = {
+    from(table) { calls.push(['from', table]); return builder },
+  }
+
+  const result = await ownedHouseQuery(supabase, houseA, ownerA)
+  assert.deepEqual(result, { data: { id: houseA }, error: null })
+  assert.deepEqual(calls, [
+    ['from', 'corenull_houses'],
+    ['select', 'id'],
+    ['eq', 'id', houseA],
+    ['eq', 'owner_id', ownerA],
+    ['maybeSingle'],
+  ])
 })
 
 test('missing or invalid token fails closed; Auth outage is retryable 503', async () => {
