@@ -68,6 +68,8 @@ For requests that pass preflight, the duplicate comparison must include all of:
 - `source_revision`
 - normalized `occurred_at`
 - `owner_id`
+- `house_id`
+- `room_id`
 - canonical `payload`
 - `payload_sha256`
 
