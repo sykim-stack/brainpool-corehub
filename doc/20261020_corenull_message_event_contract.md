@@ -24,18 +24,9 @@ CoreNull durable outbox가 전송하는 `space.message.created` event를 안정�
 
 ### 2.1 기존 Facts API (`POST /api/corehub/facts`)
 
-현재 구현 특성:
+**버전 주의:** 이 문서가 추가된 시점의 base branch와 CoreHub PR #2의 인증·멱등 처리 변경은 구분해야 한다. PR #2는 Facts/Opportunities 요청에서 Supabase Auth token을 검증하고 verified Auth UID로 ownership을 결정하며, atomic `process_fact_event` RPC로 Fact 처리 idempotency를 강화하는 별도 계약이다. 따라서 이 문서에서 `/facts`가 무인증이라고 일반화하거나 PR #2의 변경을 되돌리는 근거로 사용하면 안 된다. 실제 배포 상태는 PR merge/deploy 여부를 별도로 확인한다.
 
-- Authorization 헤더 검증 없음
-- Idempotency-Key / event_id 검증 없음
-- `owner_key`를 body에서 직접 신뢰
-- 중복 방지 unique 제약 없음
-- HTTP 200/500만 사용 (기존 코딩 계약)
-- fire-and-forget Connection 탐지
-
-이 경로는 기존 CoreNull `pushFact()` 및 다른 Core들의 단순 Fact push와 호환을 위해 **당분간 유지**한다.
-
-새로운 CoreNull Message outbox 경로는 **별도 수신 계약**을 사용한다. 기존 `/api/corehub/facts`를 바로 교체하지 않는다.
+CoreNull Message event는 기존 `/api/corehub/facts`의 legacy/PR #2 동작에 섞지 않고 **전용 수신 경로와 별도 저장 모델**로 도입한다. `/facts`의 인증·ownership·Fact pipeline 계약은 이 문서 범위에서 변경하지 않는다.
 
 ### 2.2 CoreNull producer 계약 요약 (대칭)
 
@@ -151,10 +142,12 @@ event_id  (예: corenull:messages:550e8400-e29b-41d4-a716-446655440000:v1)
 
 ### 4.2 동작
 
-1. 동일 `event_id`가 이미 존재하고 `payload_sha256`이 동일하면 → **200 OK** (또는 201과 구분하여 200) + 기존 fact_id 반환. 새로 insert하지 않음.
-2. 동일 `event_id`가 존재하는데 `payload_sha256`이 다르면 → **409 EVENT_PAYLOAD_CONFLICT**.
-3. `event_id`는 없고 `(source_record_id, source_revision, event_type)` 조합이 이미 있으면 → **409 EVENT_IDENTITY_CONFLICT** (또는 동일 취급).
-4. 신규이면 insert 후 **201 Created** (또는 기존 계약에 맞춰 200 + data).
+1. 동일 `event_id`가 이미 존재하고 아래 immutable field가 모두 일치하면 → **200 OK** + 기존 `event_record_id` 반환. 새로 insert하지 않는다.
+2. 동일 `event_id`가 있지만 immutable field 중 하나라도 다르면 → **409 EVENT_IDEMPOTENCY_CONFLICT**.
+3. `event_id`가 없지만 `(source, source_record_id, source_revision, event_type)` 조합이 이미 존재하면 → **409 EVENT_IDENTITY_CONFLICT**. 다른 event_id를 duplicate로 간주하지 않는다.
+4. 신규 event는 DB에 durable하게 commit한 뒤에만 **201 Created**를 반환한다. Commit 이전의 성공 응답은 금지한다.
+
+Immutable comparison set: `source`, `event_type`, `source_record_id`, `source_revision`, normalized `occurred_at`, `owner_id`, canonical payload, `payload_sha256`. Hash 일치만으로 전체 event 일치를 추론하지 않는다.
 
 ### 4.3 권장 unique 제약 (논리)
 
@@ -185,10 +178,14 @@ space.message.harvested
 - revision N이 없는데 N+1이 먼저 도착하면 CoreHub policy로 pending 또는 quarantine.
 - Stage A에서는 이 로직을 구현하지 않는다.
 
-### 5.3 현재 권장 응답
+### 5.3 Stage A 확정 응답
 
-- revision이 1이 아닌 `space.message.created` → **422** 또는 **409 REVISION_UNEXPECTED** (정책 확정 후).
-- 당장은 유연하게 수신하고 로그만 남겨도 됨 (구현 시 결정).
+- `space.message.created`의 `source_revision != 1` → **422 REVISION_UNEXPECTED**.
+- 다른 revision을 유연하게 수신하거나 단순히 로그만 남기는 동작은 하지 않는다. Stage A는 create event revision 1만 허용한다.
+
+### 5.4 Payload hash 검증
+
+`payload_sha256`은 `payload` 객체만의 canonical JSON UTF-8 bytes에 대한 SHA-256으로 정의한다. 권장 canonicalization은 RFC 8785 JCS이며, producer와 receiver는 동일한 공통 test vector를 통과해야 한다. Receiver는 hash를 직접 재계산하고 불일치 시 **422 PAYLOAD_HASH_MISMATCH**를 반환한다. Hash는 인증이나 서명이 아니다.
 
 ## 6. 인증·인가
 
@@ -214,7 +211,10 @@ space.message.harvested
 | Authorization 없음/불일치 | 401 | UNAUTHORIZED |
 | secret은 맞지만 허용되지 않은 source | 403 | FORBIDDEN_SOURCE |
 | 필수 필드 누락 | 400 또는 422 | VALIDATION_ERROR |
-| event_id 중복 + payload 불일치 | 409 | EVENT_PAYLOAD_CONFLICT |
+| 같은 event_id + immutable field 불일치 | 409 | EVENT_IDEMPOTENCY_CONFLICT |
+| 다른 event_id + secondary identity 충돌 | 409 | EVENT_IDENTITY_CONFLICT |
+| payload hash 재계산 불일치 | 422 | PAYLOAD_HASH_MISMATCH |
+| created event revision이 1이 아님 | 422 | REVISION_UNEXPECTED |
 | 내부 오류 | 500 / 503 | INTERNAL_ERROR |
 
 CoreNull outbox worker는:
@@ -265,7 +265,7 @@ fact_id uuid null          -- 후속 Fact로 promote된 경우
 
 옵션 B는 기존 Fact 파이프라인과 격리되어 안전하지만, Connection/Meaning 엔진 연동을 추가 작업으로 남겨둔다.
 
-**Stage A 권장**: 옵션 A 또는 B 중 하나를 선택하되, **기존 `/api/corehub/facts` 동작과 row를 변경하지 않는** 방향으로 진행.
+**Stage A 결정 제안: 옵션 B — 전용 `corehub.message_events` 테이블.** Message 관찰 event를 기존 Facts 파이프라인과 분리하고, Stage A에서는 수신·검증·멱등 저장만 수행한다. `event_id`와 `(source, source_record_id, source_revision, event_type)` 모두 DB unique constraint로 강제한다. 기존 `/api/corehub/facts`와 Facts row는 변경하지 않는다.
 
 ## 8. Response 계약
 
@@ -312,12 +312,12 @@ HTTP 409
 
 수신 직후:
 
-1. event를 durable하게 저장 (멱등).
-2. 기존 Connection → Meaning → Opportunity 파이프라인 트리거는 **선택적**으로 연결.
-3. Stage A에서는 저장 성공만으로 CoreNull outbox를 `sent` 처리할 수 있게 한다.
-4. 파이프라인 실패가 수신 자체를 실패로 만들지 않는다 (fire-and-forget 또는 별도 큐).
+1. Authentication, envelope schema, revision, canonical payload hash를 검증한다.
+2. event를 dedicated `corehub.message_events` 테이블에 durable하게 저장한다.
+3. DB commit 후에만 `201 Created`를 반환한다. 정확히 일치하는 재전송은 `200 OK`를 반환한다.
+4. Stage A에서는 Facts, Connection, Meaning, Opportunity, approval 또는 promotion pipeline을 호출하지 않는다.
 
-CoreHub는 “관찰 event를 받았음”을 보장할 뿐, Opportunity 생성까지를 수신 성공 조건으로 삼지 않는다.
+CoreHub는 “관찰 event를 durable하게 받았음”만 보장한다. CoreNull outbox가 `sent`로 finalize하는 조건도 이 저장 성공뿐이다.
 
 ## 10. RLS·credential 경계
 
@@ -336,14 +336,20 @@ CoreHub는 “관찰 event를 받았음”을 보장할 뿐, Opportunity 생성�
 
 ### Idempotency
 
-- [ ] 동일 event_id + 동일 payload_sha256 재전송 → 200 duplicate, row 증가 없음
-- [ ] 동일 event_id + 다른 payload_sha256 → 409
-- [ ] 서로 다른 event_id는 각각 저장
+- [ ] 동일 event_id + 모든 immutable field 동일 → 200 duplicate, row 증가 없음
+- [ ] 동일 event_id + payload/owner/source/revision/occurred_at 중 하나라도 변경 → 409 EVENT_IDEMPOTENCY_CONFLICT
+- [ ] 다른 event_id가 동일 `(source, source_record_id, source_revision, event_type)`를 재사용 → 409 EVENT_IDENTITY_CONFLICT
+- [ ] payload hash 재계산 불일치 → 422 PAYLOAD_HASH_MISMATCH
+- [ ] 서로 다른 event_id와 서로 다른 source identity는 각각 저장
+- [ ] concurrent duplicate 요청은 row 하나만 생성
+- [ ] DB commit 실패 시 201/200을 반환하지 않음
+- [ ] response 유실 후 동일 event 재시도는 row 추가 없이 200 duplicate
 
 ### Envelope
 
 - [ ] 필수 필드 누락 → 4xx
-- [ ] payload_sha256 불일치(서버 재계산 vs 전송값) → 정책에 따라 422 또는 경고 로그
+- [ ] payload_sha256 불일치(서버 재계산 vs 전송값) → 422 PAYLOAD_HASH_MISMATCH
+- [ ] `space.message.created` revision이 1이 아님 → 422 REVISION_UNEXPECTED
 - [ ] owner_id가 Auth UID 형식인지 기본 검증
 
 ### CoreNull 연동
@@ -354,8 +360,10 @@ CoreHub는 “관찰 event를 받았음”을 보장할 뿐, Opportunity 생성�
 
 ### 격리
 
-- [ ] 기존 `/api/corehub/facts` (legacy) 동작 불변
+- [ ] 기존 `/api/corehub/facts`의 현재 배포/PR #2 인증·ownership·Fact 처리 계약 불변
 - [ ] 기존 facts row count / payload 불변
+- [ ] Stage A event 수신이 Facts/Connection/Meaning/Opportunity를 호출하지 않음
+- [ ] secret/token 및 전체 message content가 일반 로그에 남지 않음
 
 ## 12. 구현 순서 (CoreHub)
 
@@ -381,6 +389,22 @@ CoreHub는 “관찰 event를 받았음”을 보장할 뿐, Opportunity 생성�
 - [ ] 운영 rollback 절차 승인
 
 현재 이 문서는 설계 제안이며, 운영 DB·staging DB·수신 코드에 migration이나 write를 실행하지 않았다.
+
+### 14.1 Status contract (Stage A)
+
+| 조건 | HTTP | `error_code` / status |
+|---|---:|---|
+| 신규 event를 durable하게 commit | 201 | `accepted` |
+| 기존 event_id와 모든 immutable field가 정확히 일치 | 200 | `duplicate` |
+| 같은 event_id, immutable content 차이 | 409 | `EVENT_IDEMPOTENCY_CONFLICT` |
+| 다른 event_id, 동일 secondary identity | 409 | `EVENT_IDENTITY_CONFLICT` |
+| payload hash 불일치 | 422 | `PAYLOAD_HASH_MISMATCH` |
+| `space.message.created` revision != 1 | 422 | `REVISION_UNEXPECTED` |
+| 인증 실패 | 401 | `UNAUTHORIZED` |
+| 허용되지 않은 source | 403 | `FORBIDDEN_SOURCE` |
+| network / 429 / 5xx | non-2xx | CoreNull retry policy |
+
+CoreNull worker는 401/403/409/422를 quarantine하고, network/408/429/5xx를 retry한다. Receiver는 DB unique constraint와 atomic conflict handling을 사용해야 하며, 애플리케이션 pre-check만으로 멱등성을 보장했다고 간주하지 않는다.
 
 ## 14. CoreNull 문서와의 대칭 요약
 
