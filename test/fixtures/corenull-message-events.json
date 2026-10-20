@@ -1,0 +1,58 @@
+{
+  "accepted": {
+    "source": "CoreNull",
+    "event_type": "space.message.created",
+    "event_id": "corenull:messages:message-a:v1",
+    "source_record_id": "message-a",
+    "source_revision": 1,
+    "occurred_at": "2026-10-20T00:00:00.000Z",
+    "owner_id": "auth-user-a",
+    "house_id": "house-a",
+    "room_id": "room-a",
+    "payload": {
+      "message_id": "message-a",
+      "house_id": "house-a",
+      "room_id": "room-a",
+      "type": "post",
+      "content": "원본 Message fixture",
+      "meta": {},
+      "relations": {},
+      "language": "ko",
+      "translated_ko": null,
+      "translation_status": "completed",
+      "harvested_at": null,
+      "created_at": "2026-10-20T00:00:00.000Z"
+    }
+  },
+  "duplicate": {
+    "same_as": "accepted",
+    "expected_result": "duplicate"
+  },
+  "same_key_different_payload": {
+    "same_event_id": "corenull:messages:message-a:v1",
+    "source_record_id": "message-a",
+    "source_revision": 1,
+    "owner_id": "auth-user-a",
+    "house_id": "house-a",
+    "payload_change": {
+      "content": "변조된 payload"
+    },
+    "expected_result": "conflict"
+  },
+  "wrong_owner_scope": {
+    "same_source_record_id": "message-a",
+    "event_id": "corenull:messages:message-a:v1-owner-b",
+    "owner_id": "auth-user-b",
+    "house_id": "house-b",
+    "expected_result": "rejected"
+  },
+  "body_only_owner_assertion": {
+    "source": "CoreNull",
+    "event_type": "space.message.created",
+    "event_id": "corenull:messages:message-unverified:v1",
+    "source_record_id": "message-unverified",
+    "source_revision": 1,
+    "owner_id": "client-supplied-owner",
+    "expected_result": "rejected_without_verified_auth_context"
+  }
+}
