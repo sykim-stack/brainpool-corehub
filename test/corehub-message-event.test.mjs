@@ -181,6 +181,18 @@ test('same event ID with changed occurred_at is an idempotency conflict', () => 
     { same: false, error: 'EVENT_IDEMPOTENCY_CONFLICT' })
 })
 
+test('same event ID with changed house_id or room_id is an idempotency conflict', () => {
+  const houseA = '323e4567-e89b-42d3-a456-426614174000'
+  const houseB = '523e4567-e89b-42d3-a456-426614174000'
+  const roomA = '423e4567-e89b-42d3-a456-426614174000'
+  const roomB = '623e4567-e89b-42d3-a456-426614174000'
+  const original = event({ house_id: houseA, room_id: roomA })
+  assert.equal(compareImmutableEvents(original, event({ house_id: houseB, room_id: roomA })).error,
+    'EVENT_IDEMPOTENCY_CONFLICT')
+  assert.equal(compareImmutableEvents(original, event({ house_id: houseA, room_id: roomB })).error,
+    'EVENT_IDEMPOTENCY_CONFLICT')
+})
+
 test('same event ID with changed source or event type is an idempotency conflict', () => {
   assert.equal(compareImmutableEvents(event(), event({ source: 'OtherCore' })).error,
     'EVENT_IDEMPOTENCY_CONFLICT')
