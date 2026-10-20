@@ -147,7 +147,7 @@ event_id  (예: corenull:messages:550e8400-e29b-41d4-a716-446655440000:v1)
 3. `event_id`가 없지만 `(source, source_record_id, source_revision, event_type)` 조합이 이미 존재하면 → **409 EVENT_IDENTITY_CONFLICT**. 다른 event_id를 duplicate로 간주하지 않는다.
 4. 신규 event는 DB에 durable하게 commit한 뒤에만 **201 Created**를 반환한다. Commit 이전의 성공 응답은 금지한다.
 
-Immutable comparison set: `source`, `event_type`, `source_record_id`, `source_revision`, normalized `occurred_at`, `owner_id`, canonical payload, `payload_sha256`. Hash 일치만으로 전체 event 일치를 추론하지 않는다.
+Immutable comparison set: `source`, `event_type`, `source_record_id`, `source_revision`, normalized `occurred_at`, `owner_id`, `house_id`, `room_id`, canonical payload, `payload_sha256`. Hash 일치만으로 전체 event 일치를 추론하지 않는다.
 
 **검증 순서와 우선순위:** worker 인증 → envelope shape 검증 → 허용된 `source`/`event_type` 및 Stage A revision 규칙 확인 → payload hash 재계산 → atomic idempotency lookup/insert. Preflight 단계에서 거부되는 요청은 지정된 `401/403/422`를 우선 반환하고, 기존 row를 변경하지 않는다. `409` idempotency/identity conflict는 preflight를 통과한 유효 envelope에 대해 적용한다. 따라서 disallowed source는 `403`, `space.message.created` revision이 1이 아니면 `422`가 먼저다.
 
