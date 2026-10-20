@@ -196,24 +196,28 @@ space.message.harvested
 - CoreNull worker만 이 경로를 호출할 수 있어야 한다.
 - client / browser / 임의 Core가 직접 호출하는 경로가 아니다.
 
-### 6.2 후보 방식 (ADR로 확정)
+### 6.2 인증 모델 — ADR-001과의 정합성
 
-| 방식 | 장점 | 단점 |
-|------|------|------|
-| Shared secret (Bearer 또는 X-CoreNull-Token) | 구현 단순 | 키 관리 필요 |
-| Supabase service role + 추가 claim 검증 | 기존 인프라 활용 | 범위 과다 위험 |
-| mTLS / Vercel 내부 네트워크 | 강력 | Hobby 플랜 제약 |
+CoreHub PR #2의 `Authorization: Bearer <Supabase access token>` 사용자 인증은 기존 Facts/Opportunities 경로에 유지한다. Message worker는 별도 service-to-service 경로를 필요로 하며, **CoreHub PR #2의 ADR-001은 HMAC 서명 방식을 권고 후보로 두고 있으나 아직 Proposed/미승인 상태**다.
 
-**권장 (초안)**: CoreNull worker 환경변수에 주입된 shared secret을 `Authorization: Bearer <secret>`으로 전달. CoreHub는 환경변수와 constant-time 비교.
+ADR-001의 제안은 다음 헤더 형태다.
 
-**신뢰 경계:** shared secret은 호출자가 허가된 CoreNull worker인지 확인할 뿐, `owner_id`가 실제 Supabase Auth UID인지 독립적으로 증명하지 않는다. Stage A에서는 `owner_id`를 검증된 CoreNull producer가 보증하는 assertion으로 취급한다. CoreHub가 사용자 UID까지 독립 검증해야 한다면 별도의 signed assertion/JWT 검증 계약과 key rotation 절차를 ADR로 확정하기 전에는 활성화하지 않는다. Secret은 Vercel 환경변수로만 보관하고, 저장소·DB·payload·URL·로그에 기록하지 않는다. Rotation은 새 키를 receiver에 먼저 배포하고 producer를 전환한 뒤 구 키를 폐기하는 overlap 절차를 staging에서 검증한다.
+```http
+Authorization: CoreHub-HMAC key_id="...", timestamp="...", nonce="...", signature="..."
+```
+
+서명 대상에는 HTTP method, path, timestamp, nonce 및 canonical request-body hash가 포함된다. Receiver는 key id 활성 상태, timestamp 허용 오차, nonce 재사용, signature, body hash를 검증한다. HMAC secret은 환경변수/secret manager에서만 읽으며 DB, payload, URL, 저장소, 일반 로그에 기록하지 않는다. Key rotation은 구 키와 새 키의 짧은 overlap을 staging에서 검증한다.
+
+**중요한 미결정 사항:** 유효한 HMAC은 호출 서비스만 인증하며, request의 `owner_id`가 실제 Supabase Auth UID임을 단독으로 증명하지 않는다. `house_id`와 `owner_id`를 어떻게 검증된 ownership에 연결할지 ADR-001의 미결정 항목을 해결해야 한다. `corenull.houses.owner_id` 매핑 조회 또는 별도 서명된 ownership assertion 중 하나를 승인하기 전에는 worker 수신 경로를 활성화하지 않는다. `service_role`을 사용자 identity의 대체물로 쓰지 않는다.
+
+이 문서의 shared-secret Bearer 모델은 승인된 설계로 간주하지 않는다. ADR-001이 승인되기 전에는 인증 핸들러, worker secret 형식, 운영 credential 설정을 확정하지 않는다.
 
 ### 6.3 실패 응답
 
 | 상황 | HTTP Status | error_code 예 |
 |------|-------------|----------------|
-| Authorization 없음/불일치 | 401 | UNAUTHORIZED |
-| secret은 맞지만 허용되지 않은 source | 403 | FORBIDDEN_SOURCE |
+| HMAC 헤더 없음/서명 불일치/expired timestamp/replayed nonce | 401 | UNAUTHORIZED |
+| 서명된 요청이지만 허용되지 않은 source | 403 | FORBIDDEN_SOURCE |
 | 필수 필드 누락 | 400 또는 422 | VALIDATION_ERROR |
 | 같은 event_id + immutable field 불일치 | 409 | EVENT_IDEMPOTENCY_CONFLICT |
 | 다른 event_id + secondary identity 충돌 | 409 | EVENT_IDENTITY_CONFLICT |
@@ -223,7 +227,7 @@ space.message.harvested
 
 CoreNull outbox worker는:
 
-- 401 / 403 / 409 → quarantine
+- 401 / 403 / 409 / 422 → quarantine
 - 408 / 429 / 5xx / network → retry
 
 이 매핑을 깨지 않도록 status를 안정적으로 유지한다.
