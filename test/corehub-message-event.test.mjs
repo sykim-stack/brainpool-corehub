@@ -221,6 +221,16 @@ test('secondary identity collision is not treated as a duplicate', () => {
   }), { same: false, error: 'EVENT_IDENTITY_CONFLICT' })
 })
 
+test('simultaneous event ID and secondary identity rows cannot mask each other', () => {
+  const byEventId = event()
+  const byIdentity = event({ event_id: 'different-event-id' })
+  assert.deepEqual(classifyEventCollision({
+    existingByEventId: byEventId,
+    existingByIdentity: byIdentity,
+    incoming: event(),
+  }), { same: false, error: 'EVENT_IDENTITY_CONFLICT' })
+})
+
 test('an event with no existing collision is eligible for insert', () => {
   assert.deepEqual(classifyEventCollision({
     existingByEventId: null,
