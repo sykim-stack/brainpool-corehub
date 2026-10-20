@@ -47,7 +47,7 @@ Requirements:
 | CT-09 | Submitted hash does not match receiver-recomputed hash | 422 `PAYLOAD_HASH_MISMATCH` | No row created |
 | CT-10 | `space.message.created` with revision other than 1 | 422 `REVISION_UNEXPECTED` | No row created |
 | CT-11 | Missing required envelope field / malformed JSON | 400 or 422 validation response, fixed by implementation contract | No row created |
-| CT-12 | Missing or incorrect worker secret | 401 `UNAUTHORIZED` | No row created |
+| CT-12 | Missing/invalid HMAC signature, expired timestamp, or replayed nonce | 401 `UNAUTHORIZED` | No row created |
 | CT-13 | Authenticated request uses disallowed source | 403 `FORBIDDEN_SOURCE` | No row created |
 | CT-14 | Two concurrent identical requests | One 201 and one 200 (or equivalent serialized outcome) | Exactly one row |
 | CT-15 | Database insert/commit fails | 5xx, never 200/201 | No partial row |
@@ -59,7 +59,7 @@ Requirements:
 
 ### Immutable fields for exact duplicate comparison
 
-Preflight validation order is: authenticate worker → validate envelope shape → enforce allowed source/event type/revision → recompute payload hash → perform atomic idempotency lookup/insert. A request that fails preflight returns its designated 4xx code before any duplicate lookup; it must not create or alter a row.
+Preflight validation order is: verify approved worker HMAC (once ADR-001 is accepted) → validate envelope shape → enforce allowed source/event type/revision → recompute payload hash → perform atomic idempotency lookup/insert. A request that fails preflight returns its designated 4xx code before any duplicate lookup; it must not create or alter a row.
 
 For requests that pass preflight, the duplicate comparison must include all of:
 - `source`
@@ -95,6 +95,7 @@ No production data may be used for test fixtures. Never enable the producer agai
 
 ## 6. Exit criteria
 
+- [ ] ADR-001 is approved, including HMAC signing fields, key rotation, replay protection, and owner/house ownership verification.
 - [ ] Test runner and script are selected and added to the implementation PR.
 - [ ] All pure tests pass.
 - [ ] Database integration tests pass against disposable PostgreSQL/Supabase staging.
