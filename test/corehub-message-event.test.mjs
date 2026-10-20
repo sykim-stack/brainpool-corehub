@@ -61,6 +61,11 @@ test('canonical JSON rejects unsupported JavaScript values', () => {
   assert.throws(() => canonicalizeJson(1n), /unsupported_json_value/)
 })
 
+test('canonical JSON rejects lone UTF-16 surrogates', () => {
+  assert.throws(() => canonicalizeJson('\\ud800'), /invalid_unicode_string/)
+  assert.throws(() => canonicalizeJson({ '\\ud800': 'value' }), /invalid_unicode_key/)
+})
+
 test('payload hash is stable when object key order changes', () => {
   assert.equal(sha256Payload({ a: 1, b: { c: 2, d: 3 } }),
     sha256Payload({ b: { d: 3, c: 2 }, a: 1 }))
@@ -149,8 +154,9 @@ test('house and room identifiers must match the envelope when both are supplied'
   })), { ok: false, error: 'VALIDATION_ERROR' })
 })
 
-test('occurred_at normalization makes equivalent timezone instants equal', () => {
+test('occurred_at normalization makes equivalent timezone instants equal and rejects invalid calendar dates', () => {
   assert.equal(normalizeOccurredAt('2026-10-20T01:00:00+01:00'), '2026-10-20T00:00:00.000Z')
+  assert.equal(normalizeOccurredAt('2026-02-31T00:00:00.000Z'), null)
   assert.equal(normalizeOccurredAt('invalid'), null)
 })
 
