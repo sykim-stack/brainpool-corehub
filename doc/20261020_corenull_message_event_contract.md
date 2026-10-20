@@ -204,6 +204,8 @@ space.message.harvested
 
 **권장 (초안)**: CoreNull worker 환경변수에 주입된 shared secret을 `Authorization: Bearer <secret>`으로 전달. CoreHub는 환경변수와 constant-time 비교.
 
+**신뢰 경계:** shared secret은 호출자가 허가된 CoreNull worker인지 확인할 뿐, `owner_id`가 실제 Supabase Auth UID인지 독립적으로 증명하지 않는다. Stage A에서는 `owner_id`를 검증된 CoreNull producer가 보증하는 assertion으로 취급한다. CoreHub가 사용자 UID까지 독립 검증해야 한다면 별도의 signed assertion/JWT 검증 계약과 key rotation 절차를 ADR로 확정하기 전에는 활성화하지 않는다. Secret은 Vercel 환경변수로만 보관하고, 저장소·DB·payload·URL·로그에 기록하지 않는다. Rotation은 새 키를 receiver에 먼저 배포하고 producer를 전환한 뒤 구 키를 폐기하는 overlap 절차를 staging에서 검증한다.
+
 ### 6.3 실패 응답
 
 | 상황 | HTTP Status | error_code 예 |
