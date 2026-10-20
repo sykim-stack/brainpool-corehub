@@ -43,6 +43,8 @@ Requirements:
 | CT-05 | Same event ID, request source is not allowlisted | 403 `FORBIDDEN_SOURCE` before idempotency lookup | Original row unchanged |
 | CT-06 | Same event ID, `space.message.created` revision is not 1 | 422 `REVISION_UNEXPECTED` before idempotency lookup | Original row unchanged |
 | CT-07 | Same event ID, occurred_at differs | 409 `EVENT_IDEMPOTENCY_CONFLICT` | Original row unchanged |
+| CT-21 | Same event ID, house_id differs | 409 `EVENT_IDEMPOTENCY_CONFLICT` | Original row unchanged |
+| CT-22 | Same event ID, room_id differs | 409 `EVENT_IDEMPOTENCY_CONFLICT` | Original row unchanged |
 | CT-08 | Different event ID reuses same (source, source_record_id, source_revision, event_type) | 409 `EVENT_IDENTITY_CONFLICT` | Original row unchanged |
 | CT-09 | Submitted hash does not match receiver-recomputed hash | 422 `PAYLOAD_HASH_MISMATCH` | No row created |
 | CT-10 | `space.message.created` with revision other than 1 | 422 `REVISION_UNEXPECTED` | No row created |
