@@ -158,6 +158,7 @@ test('house and room identifiers must match the envelope when both are supplied'
 test('occurred_at normalization makes equivalent timezone instants equal and rejects invalid calendar dates', () => {
   assert.equal(normalizeOccurredAt('2026-10-20T01:00:00+01:00'), '2026-10-20T00:00:00.000Z')
   assert.equal(normalizeOccurredAt('2026-02-31T00:00:00.000Z'), null)
+  assert.equal(normalizeOccurredAt('2026-10-20T00:00:00'), null)
   assert.equal(normalizeOccurredAt('invalid'), null)
 })
 
