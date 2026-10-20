@@ -138,6 +138,17 @@ test('payload must identify the same source Message', () => {
     { ok: false, error: 'VALIDATION_ERROR' })
 })
 
+test('house and room identifiers must match the envelope when both are supplied', () => {
+  const houseId = '323e4567-e89b-42d3-a456-426614174000'
+  const roomId = '423e4567-e89b-42d3-a456-426614174000'
+  const body = { ...payload, house_id: houseId, room_id: roomId }
+  const valid = event({ house_id: houseId, room_id: roomId, payload: body })
+  assert.equal(validateMessageEventEnvelope(valid).ok, true)
+  assert.deepEqual(validateMessageEventEnvelope(event({
+    house_id: '523e4567-e89b-42d3-a456-426614174000', payload: body,
+  })), { ok: false, error: 'VALIDATION_ERROR' })
+})
+
 test('occurred_at normalization makes equivalent timezone instants equal', () => {
   assert.equal(normalizeOccurredAt('2026-10-20T01:00:00+01:00'), '2026-10-20T00:00:00.000Z')
   assert.equal(normalizeOccurredAt('invalid'), null)
