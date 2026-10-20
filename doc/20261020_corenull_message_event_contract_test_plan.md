@@ -40,8 +40,8 @@ Requirements:
 | CT-02 | Exact retry: same event ID and all immutable fields | 200 `duplicate` | No additional row |
 | CT-03 | Same event ID, payload differs but hash is updated to match changed payload | 409 `EVENT_IDEMPOTENCY_CONFLICT` | Original row unchanged |
 | CT-04 | Same event ID, owner_id differs | 409 `EVENT_IDEMPOTENCY_CONFLICT` | Original row unchanged |
-| CT-05 | Same event ID, source/event_type differs | 409 `EVENT_IDEMPOTENCY_CONFLICT` or envelope validation 4xx, consistently documented | Original row unchanged |
-| CT-06 | Same event ID, source_revision differs | 409 `EVENT_IDEMPOTENCY_CONFLICT` or revision validation 422, consistently documented | Original row unchanged |
+| CT-05 | Same event ID, request source is not allowlisted | 403 `FORBIDDEN_SOURCE` before idempotency lookup | Original row unchanged |
+| CT-06 | Same event ID, `space.message.created` revision is not 1 | 422 `REVISION_UNEXPECTED` before idempotency lookup | Original row unchanged |
 | CT-07 | Same event ID, occurred_at differs | 409 `EVENT_IDEMPOTENCY_CONFLICT` | Original row unchanged |
 | CT-08 | Different event ID reuses same (source, source_record_id, source_revision, event_type) | 409 `EVENT_IDENTITY_CONFLICT` | Original row unchanged |
 | CT-09 | Submitted hash does not match receiver-recomputed hash | 422 `PAYLOAD_HASH_MISMATCH` | No row created |
@@ -59,7 +59,9 @@ Requirements:
 
 ### Immutable fields for exact duplicate comparison
 
-The duplicate comparison must include all of:
+Preflight validation order is: authenticate worker → validate envelope shape → enforce allowed source/event type/revision → recompute payload hash → perform atomic idempotency lookup/insert. A request that fails preflight returns its designated 4xx code before any duplicate lookup; it must not create or alter a row.
+
+For requests that pass preflight, the duplicate comparison must include all of:
 - `source`
 - `event_type`
 - `source_record_id`
