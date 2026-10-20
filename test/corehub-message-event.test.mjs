@@ -62,8 +62,9 @@ test('canonical JSON rejects unsupported JavaScript values', () => {
 })
 
 test('canonical JSON rejects lone UTF-16 surrogates', () => {
-  assert.throws(() => canonicalizeJson('\\ud800'), /invalid_unicode_string/)
-  assert.throws(() => canonicalizeJson({ '\\ud800': 'value' }), /invalid_unicode_key/)
+  const loneSurrogate = String.fromCharCode(0xd800)
+  assert.throws(() => canonicalizeJson(loneSurrogate), /invalid_unicode_string/)
+  assert.throws(() => canonicalizeJson({ [loneSurrogate]: 'value' }), /invalid_unicode_key/)
 })
 
 test('payload hash is stable when object key order changes', () => {
