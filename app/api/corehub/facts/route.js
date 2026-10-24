@@ -1,226 +1,308 @@
-﻿// CoreHub - Facts API
-// Core들이 Fact를 전달하는 수집 엔드포인트
-// POST → Fact 저장 + Connection 탐지 트리거
-// GET  → Fact 조회
+﻿import { authenticateUser } from '@/lib/corehub/auth.mjs'
+import { isHmacRequest, verifyHmacRequest } from '@/lib/corehub/hmac.mjs'
+import { ownedHouseQuery } from '@/lib/corehub/houseOwnership.mjs'
 
 export const dynamic = 'force-dynamic'
 
 const SCHEMA = 'corehub'
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const SOURCE_RE = /^[A-Za-z][A-Za-z0-9._-]{0,63}$/
+const FACT_TYPE_RE = /^[A-Za-z][A-Za-z0-9._-]{0,127}$/
+const IDEMPOTENCY_RE = /^[A-Za-z0-9._:-]{8,200}$/
+const HASH_RE = /^[A-Fa-f0-9]{64}$/
+const MAX_BODY_BYTES = 64 * 1024
+const WORKER_IDENTITY_FIELDS = ['owner_id', 'owner_key', 'auth_user_id', 'device_id']
+const HMAC_SECRET_ENV_BY_KEY_VERSION = Object.freeze({
+  'corehub-r5-staging-v1': 'COREHUB_HMAC_SECRET_COREHUB_R5_STAGING_V1',
+})
 
-const handler = async (req) => {
-  const traceId = crypto.randomUUID()
-  if (req.method === 'POST') return handlePost(req, traceId)
-  if (req.method === 'GET')  return handleGet(req, traceId)
-  return Response.json({ _error: 'method_not_allowed', traceId }, { status: 500 })
+function jsonError(error, traceId, status) {
+  return Response.json({ error, traceId }, { status })
 }
 
-const handlePost = async (req, traceId) => {
-  const body = JSON.parse(await req.text())
-  const { source, fact_type, owner_key, house_id, occurred_at, payload } = body
+function hasWorkerIdentityFields(body) {
+  return WORKER_IDENTITY_FIELDS.some((field) => Object.hasOwn(body, field))
+}
 
-  if (!source || !fact_type || !owner_key) {
-    return Response.json({ _error: 'source_fact_type_owner_key_required', traceId }, { status: 500 })
+function resolveHmacSecret(keyVersion) {
+  const envName = HMAC_SECRET_ENV_BY_KEY_VERSION[keyVersion]
+  return envName ? process.env[envName] ?? null : null
+}
+
+async function lookupHmacDevice(supabase, deviceId) {
+  const { data, error } = await supabase
+    .schema(SCHEMA)
+    .from('device_registry')
+    .select('device_id,source_core,key_version,enabled')
+    .eq('device_id', deviceId)
+    .maybeSingle()
+
+  if (error) throw error
+  if (!data) return null
+  return { ...data, secret: resolveHmacSecret(data.key_version) }
+}
+
+async function claimHmacNonce(supabase, claim) {
+  const { data, error } = await supabase
+    .schema(SCHEMA)
+    .rpc('claim_device_nonce', {
+      p_device_id: claim.deviceId,
+      p_nonce: claim.nonce,
+      p_expires_at: claim.expiresAt,
+    })
+
+  if (error) throw error
+  return data === true
+}
+
+async function getSupabase(traceId) {
+  const { getSupabase: createSupabase } = await import('@/lib/supabase')
+  const supabase = createSupabase()
+  return supabase ?? { response: jsonError('server_configuration_error', traceId, 503) }
+}
+
+async function getUserContext(req, traceId, supabase) {
+  const auth = await authenticateUser(req, supabase)
+  if (!auth.ok) return { response: jsonError(auth.error, traceId, auth.status) }
+  return { supabase, subjectType: 'user', userId: auth.userId }
+}
+
+async function getPostContext(req, traceId, supabase, rawBody) {
+  if (!isHmacRequest(req)) return getUserContext(req, traceId, supabase)
+
+  const auth = await verifyHmacRequest(req, rawBody, {
+    lookupDevice: (deviceId) => lookupHmacDevice(supabase, deviceId),
+    claimNonce: (claim) => claimHmacNonce(supabase, claim),
+  })
+  if (!auth.ok) return { response: jsonError(auth.error, traceId, auth.status) }
+
+  return {
+    supabase,
+    subjectType: 'device',
+    deviceId: auth.deviceId,
+    sourceCore: auth.sourceCore,
+  }
+}
+
+async function handler(req) {
+  const traceId = crypto.randomUUID()
+  if (req.method !== 'GET' && req.method !== 'POST') {
+    return jsonError('method_not_allowed', traceId, 405)
   }
 
-  const { getSupabase } = await import('@/lib/supabase')
-  const supabase = getSupabase()
-  if (!supabase) return Response.json({ _error: 'supabase_init_failed', traceId }, { status: 500 })
+  try {
+    const supabase = await getSupabase(traceId)
+    if (supabase.response) return supabase.response
 
-  const { data: fact, error } = await supabase
-    .schema(SCHEMA)
-    .from('facts')
-    .insert({
-      source,
-      fact_type,
-      owner_key,
-      house_id: house_id || null,
-      occurred_at: occurred_at || new Date().toISOString(),
-      payload: payload || {},
-      processed: false,
-    })
-    .select()
-    .single()
+    if (req.method === 'GET') {
+      const context = await getUserContext(req, traceId, supabase)
+      if (context.response) return context.response
+      return handleGet(req, traceId, context)
+    }
 
-  if (error) return Response.json({ _error: error.message, traceId }, { status: 500 })
+    const rawBody = await req.text()
+    if (new TextEncoder().encode(rawBody).byteLength > MAX_BODY_BYTES) {
+      return jsonError('request_body_too_large', traceId, 413)
+    }
 
-  console.log(`[corehub/facts] saved source=${source} type=${fact_type} owner=${owner_key}`)
-
-  // Connection 탐지 (fire-and-forget)
-  detectConnections(supabase, fact).catch(e =>
-    console.error('[corehub/facts] connection detect failed:', e)
-  )
-
-  return Response.json({ data: { fact_id: fact.id }, traceId })
+    const context = await getPostContext(req, traceId, supabase, rawBody)
+    if (context.response) return context.response
+    return handlePost(req, traceId, context, rawBody)
+  } catch (error) {
+    console.error('[corehub/facts] request failed', traceId, error?.message ?? 'unknown')
+    return jsonError('internal_error', traceId, 500)
+  }
 }
 
-const handleGet = async (req, traceId) => {
-  const { searchParams } = new URL(req.url)
-  const owner_key = searchParams.get('owner_key')
-  const source = searchParams.get('source')
-  const limit = parseInt(searchParams.get('limit') || '20')
+async function handleGet(req, traceId, { supabase, userId }) {
+  const url = new URL(req.url)
+  const rawLimit = url.searchParams.get('limit') ?? '20'
+  const limit = Number(rawLimit)
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+    return jsonError('invalid_limit', traceId, 400)
+  }
 
-  const { getSupabase } = await import('@/lib/supabase')
-  const supabase = getSupabase()
-  if (!supabase) return Response.json({ _error: 'supabase_init_failed', traceId }, { status: 500 })
+  const source = url.searchParams.get('source')
+  if (source && !SOURCE_RE.test(source)) return jsonError('invalid_source', traceId, 400)
+
+  const houseId = url.searchParams.get('house_id')
+  if (houseId && !UUID_RE.test(houseId)) return jsonError('invalid_house_id', traceId, 400)
 
   let query = supabase
     .schema(SCHEMA)
     .from('facts')
-    .select('*')
+    .select('id,source,fact_type,owner_id,house_id,occurred_at,payload,processed')
+    .eq('owner_id', userId)
     .order('occurred_at', { ascending: false })
     .limit(limit)
 
-  if (owner_key) query = query.eq('owner_key', owner_key)
   if (source) query = query.eq('source', source)
+  if (houseId) query = query.eq('house_id', houseId)
 
   const { data, error } = await query
-  if (error) return Response.json({ _error: error.message, traceId }, { status: 500 })
-
-  return Response.json({ data, traceId })
+  if (error) {
+    console.error('[corehub/facts] read failed', traceId, error.code)
+    return jsonError('fact_read_failed', traceId, 500)
+  }
+  return Response.json({ data: data ?? [], traceId })
 }
 
-const detectConnections = async (supabase, newFact) => {
-  const { data: recentFacts } = await supabase
-    .schema(SCHEMA)
-    .from('facts')
-    .select('*')
-    .eq('owner_key', newFact.owner_key)
-    .order('occurred_at', { ascending: false })
-    .limit(10)
+function parseJsonObject(rawBody, traceId) {
+  let body
+  try {
+    body = JSON.parse(rawBody)
+  } catch {
+    return { response: jsonError('invalid_json', traceId, 400) }
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { response: jsonError('invalid_request_body', traceId, 400) }
+  }
+  return { body }
+}
 
-  if (!recentFacts || recentFacts.length < 2) return
+async function handlePost(req, traceId, context, rawBody) {
+  const idempotencyKey = req.headers.get('idempotency-key')
+  if (!idempotencyKey || !IDEMPOTENCY_RE.test(idempotencyKey)) {
+    return jsonError('valid_idempotency_key_required', traceId, 400)
+  }
 
-  const factTypes = recentFacts.map(f => f.fact_type)
+  const parsed = parseJsonObject(rawBody, traceId)
+  if (parsed.response) return parsed.response
+  const { body } = parsed
 
-  const patterns = [
-    {
-      // 1순위: 씨앗 → 열매 달성 (fruit 있으면 abandonment보다 우선)
-      match: (types) =>
-        types.includes('space.seed.created') &&
-        types.includes('space.fruit.created'),
-      connection_type: 'seed.to.fruit.achieved',
-      strength: 0.95,
-    },
-    {
-      // 2순위: 번역 + 채팅 → 언어 다른 관계 형성
-      match: (types) =>
-        types.includes('language.translated') &&
-        types.includes('relation.chat.sent'),
-      connection_type: 'cross.language.relationship',
-      strength: 0.8,
-    },
-    {
-      // 3순위: 씨앗 생성 후 방문/열매 없음 → 포기 위험
-      match: (types) =>
-        types.includes('space.seed.created') &&
-        !types.includes('space.room.visited') &&
-        !types.includes('space.fruit.created'),
-      connection_type: 'seed.abandonment.risk',
-      strength: 0.7,
-    },
-  ]
+  if (context.subjectType === 'device') {
+    return handleWorkerPost(req, traceId, context, body, idempotencyKey)
+  }
+  return handleUserPost(traceId, context, body, idempotencyKey)
+}
 
-  for (const pattern of patterns) {
-    if (pattern.match(factTypes)) {
-      const matchedFacts = recentFacts.filter(f =>
-        factTypes.includes(f.fact_type)
-      )
+async function handleUserPost(traceId, { supabase, userId }, body, idempotencyKey) {
+  // Ownership is derived only from the verified Supabase access token.
+  if (Object.hasOwn(body, 'owner_id') || Object.hasOwn(body, 'owner_key')) {
+    return jsonError('owner_fields_not_accepted', traceId, 400)
+  }
 
-      const { data: connection } = await supabase
-        .schema(SCHEMA)
-        .from('connections')
-        .insert({
-          fact_ids: matchedFacts.map(f => f.id),
-          connection_type: pattern.connection_type,
-          strength: pattern.strength,
-          owner_key: newFact.owner_key,
-          house_id: newFact.house_id || null,
-        })
-        .select()
-        .single()
+  const source = typeof body.source === 'string' ? body.source.trim() : ''
+  const factType = typeof body.fact_type === 'string' ? body.fact_type.trim() : ''
+  const houseId = body.house_id ?? null
+  const occurredAt = typeof body.occurred_at === 'string' ? new Date(body.occurred_at) : null
+  const payload = body.payload ?? {}
 
-      if (connection) {
-        console.log(`[corehub/connect] detected type=${pattern.connection_type} strength=${pattern.strength}`)
-        await generateMeaning(supabase, connection, matchedFacts)
-      }
+  if (!SOURCE_RE.test(source) || !FACT_TYPE_RE.test(factType)) {
+    return jsonError('source_and_fact_type_required', traceId, 400)
+  }
+  if (!occurredAt || !Number.isFinite(occurredAt.getTime())) {
+    return jsonError('valid_occurred_at_required', traceId, 400)
+  }
+  if (houseId !== null && (typeof houseId !== 'string' || !UUID_RE.test(houseId))) {
+    return jsonError('invalid_house_id', traceId, 400)
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return jsonError('payload_must_be_an_object', traceId, 400)
+  }
 
-      break // 첫 번째 매칭 패턴만 처리
+  if (houseId) {
+    const { data: house, error: houseError } = await ownedHouseQuery(supabase, houseId, userId)
+    if (houseError) {
+      console.error('[corehub/facts] house ownership check failed', traceId, houseError.code)
+      return jsonError('ownership_check_failed', traceId, 500)
     }
-  }
-}
-
-const generateMeaning = async (supabase, connection, facts) => {
-  const meaningMap = {
-    'seed.abandonment.risk': { meaning_type: 'seed.at.risk', confidence: 0.72 },
-    'cross.language.relationship': { meaning_type: 'new.relationship.forming', confidence: 0.80 },
-    'seed.to.fruit.achieved': { meaning_type: 'goal.achieved', confidence: 0.95 },
+    if (!house) return jsonError('house_not_owned_by_user', traceId, 403)
   }
 
-  const meaning = meaningMap[connection.connection_type]
-  if (!meaning) return
-
-  const { data: meaningData } = await supabase
+  const { data, error } = await supabase
     .schema(SCHEMA)
-    .from('meanings')
-    .insert({
-      meaning_type: meaning.meaning_type,
-      confidence: meaning.confidence,
-      source_fact_ids: facts.map(f => f.id),
-      connection_ids: [connection.id],
-      owner_key: connection.owner_key,
-      house_id: connection.house_id,
-    })
-    .select()
-    .single()
-
-  if (meaningData) {
-    console.log(`[corehub/meaning] generated type=${meaning.meaning_type} confidence=${meaning.confidence}`)
-    await generateOpportunity(supabase, meaningData)
-  }
-}
-
-const generateOpportunity = async (supabase, meaning) => {
-  const opportunityMap = {
-    'seed.at.risk': {
-      opportunity_type: 'nudge.seed.owner',
-      action_type: 'trigger.hajunai.nudge',
-      priority: 'high',
-      payload: { message: '씨앗이 기다리고 있어요' },
-      expires_hours: 24,
-    },
-    'new.relationship.forming': {
-      opportunity_type: 'suggest.translation.help',
-      action_type: 'suggest.corering',
-      priority: 'medium',
-      payload: { message: '번역 도움이 필요하신가요?' },
-      expires_hours: 48,
-    },
-    'goal.achieved': {
-      opportunity_type: 'celebrate.achievement',
-      action_type: 'trigger.hajunai.celebrate',
-      priority: 'high',
-      payload: { message: '씨앗이 열매가 됐어요 🍎' },
-      expires_hours: 72,
-    },
-  }
-
-  const opportunity = opportunityMap[meaning.meaning_type]
-  if (!opportunity) return
-
-  await supabase
-    .schema(SCHEMA)
-    .from('opportunities')
-    .insert({
-      opportunity_type: opportunity.opportunity_type,
-      source_meaning_id: meaning.id,
-      target_owner_key: meaning.owner_key,
-      priority: opportunity.priority,
-      action_type: opportunity.action_type,
-      payload: opportunity.payload,
-      expires_at: new Date(Date.now() + opportunity.expires_hours * 60 * 60 * 1000).toISOString(),
+    .rpc('process_fact_event', {
+      p_owner_id: userId,
+      p_source: source,
+      p_fact_type: factType,
+      p_idempotency_key: idempotencyKey,
+      p_house_id: houseId,
+      p_occurred_at: occurredAt.toISOString(),
+      p_payload: payload,
     })
 
-  console.log(`[corehub/opportunity] created type=${opportunity.opportunity_type} expires_hours=${opportunity.expires_hours}`)
+  if (error) {
+    if (error.code === '22023' && error.message?.includes('idempotency_key_reused')) {
+      return jsonError('idempotency_key_reused_with_different_event', traceId, 409)
+    }
+    console.error('[corehub/facts] atomic processing failed', traceId, error.code)
+    return jsonError('fact_processing_failed_retry_with_same_key', traceId, 503)
+  }
+
+  return Response.json({ data, traceId }, { status: data?.duplicate ? 200 : 201 })
+}
+
+async function handleWorkerPost(req, traceId, { supabase, deviceId, sourceCore }, body, idempotencyKey) {
+  if (hasWorkerIdentityFields(body)) {
+    return jsonError('worker_identity_fields_not_accepted', traceId, 400)
+  }
+  if (Object.hasOwn(body, 'house_id')) {
+    return jsonError('worker_house_id_not_accepted', traceId, 400)
+  }
+
+  const source = typeof body.source === 'string' ? body.source.trim() : ''
+  const eventType = typeof body.event_type === 'string' ? body.event_type.trim() : ''
+  const eventId = typeof body.event_id === 'string' ? body.event_id.trim() : ''
+  const sourceRecordId = typeof body.source_record_id === 'string'
+    ? body.source_record_id.trim()
+    : ''
+  const sourceRevision = body.source_revision
+  const occurredAt = typeof body.occurred_at === 'string' ? new Date(body.occurred_at) : null
+  const payload = body.payload
+  const payloadSha256 = typeof body.payload_sha256 === 'string'
+    ? body.payload_sha256.trim()
+    : ''
+
+  if (source !== sourceCore || !SOURCE_RE.test(source)) {
+    return jsonError('worker_source_not_allowed', traceId, 403)
+  }
+  if (!FACT_TYPE_RE.test(eventType) || !eventId || eventId !== idempotencyKey) {
+    return jsonError('valid_event_id_and_idempotency_key_required', traceId, 400)
+  }
+  if (!sourceRecordId || sourceRecordId.length > 200) {
+    return jsonError('valid_source_record_id_required', traceId, 400)
+  }
+  if (!Number.isSafeInteger(sourceRevision) || sourceRevision < 1) {
+    return jsonError('valid_source_revision_required', traceId, 400)
+  }
+  if (!occurredAt || !Number.isFinite(occurredAt.getTime())) {
+    return jsonError('valid_occurred_at_required', traceId, 400)
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return jsonError('payload_must_be_an_object', traceId, 400)
+  }
+  if (!HASH_RE.test(payloadSha256)) {
+    return jsonError('valid_payload_sha256_required', traceId, 400)
+  }
+
+  const { data, error } = await supabase
+    .schema(SCHEMA)
+    .rpc('process_device_fact_event', {
+      p_device_id: deviceId,
+      p_source: source,
+      p_event_type: eventType,
+      p_event_id: eventId,
+      p_source_record_id: sourceRecordId,
+      p_source_revision: sourceRevision,
+      p_occurred_at: occurredAt.toISOString(),
+      p_payload: payload,
+      p_payload_sha256: payloadSha256,
+    })
+
+  if (error) {
+    if (error.code === '42501') return jsonError('worker_device_scope_denied', traceId, 403)
+    if (error.code === '22023' && /reused|conflict/i.test(error.message ?? '')) {
+      return jsonError('worker_event_conflict', traceId, 409)
+    }
+    if (error.code === '40001') {
+      return jsonError('worker_event_processing_retry', traceId, 503)
+    }
+    console.error('[corehub/facts] device event processing failed', traceId, error.code)
+    return jsonError('worker_event_processing_failed_retry', traceId, 503)
+  }
+
+  return Response.json({ data, traceId }, { status: data?.duplicate ? 200 : 201 })
 }
 
 export { handler as GET, handler as POST }
