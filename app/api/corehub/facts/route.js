@@ -1,4 +1,9 @@
-﻿import { authenticateUser } from '@/lib/corehub/auth.mjs'
+// Choice B: worker Fact → process_fact_event(p_device_id); Message → process_device_fact_event
+// Depends on: 20261005150000_corehub_auth_idempotent_processing.sql +
+//             20261026_corehub_device_principal_and_registry.sql (staging)
+// ADR-002 / GAP-PR2-vs-ADR002-alignment-B-2026-10-26
+
+import { authenticateUser } from '@/lib/corehub/auth.mjs'
 import { isHmacRequest, verifyHmacRequest } from '@/lib/corehub/hmac.mjs'
 import { ownedHouseQuery } from '@/lib/corehub/houseOwnership.mjs'
 
@@ -24,6 +29,16 @@ function hasWorkerIdentityFields(body) {
   return WORKER_IDENTITY_FIELDS.some((field) => Object.hasOwn(body, field))
 }
 
+/** Message outbox envelope (CoreNull) vs plain Fact (CoreRing). */
+function isMessageEnvelope(body) {
+  return (
+    Object.hasOwn(body, 'event_id') ||
+    Object.hasOwn(body, 'event_type') ||
+    Object.hasOwn(body, 'payload_sha256') ||
+    Object.hasOwn(body, 'source_revision')
+  )
+}
+
 function resolveHmacSecret(keyVersion) {
   const envName = HMAC_SECRET_ENV_BY_KEY_VERSION[keyVersion]
   return envName ? process.env[envName] ?? null : null
@@ -43,13 +58,11 @@ async function lookupHmacDevice(supabase, deviceId) {
 }
 
 async function claimHmacNonce(supabase, claim) {
-  const { data, error } = await supabase
-    .schema(SCHEMA)
-    .rpc('claim_device_nonce', {
-      p_device_id: claim.deviceId,
-      p_nonce: claim.nonce,
-      p_expires_at: claim.expiresAt,
-    })
+  const { data, error } = await supabase.schema(SCHEMA).rpc('claim_device_nonce', {
+    p_device_id: claim.deviceId,
+    p_nonce: claim.nonce,
+    p_expires_at: claim.expiresAt,
+  })
 
   if (error) throw error
   return data === true
@@ -131,7 +144,7 @@ async function handleGet(req, traceId, { supabase, userId }) {
   let query = supabase
     .schema(SCHEMA)
     .from('facts')
-    .select('id,source,fact_type,owner_id,house_id,occurred_at,payload,processed')
+    .select('id,source,fact_type,owner_id,device_id,house_id,occurred_at,payload,processed')
     .eq('owner_id', userId)
     .order('occurred_at', { ascending: false })
     .limit(limit)
@@ -177,9 +190,11 @@ async function handlePost(req, traceId, context, rawBody) {
 }
 
 async function handleUserPost(traceId, { supabase, userId }, body, idempotencyKey) {
-  // Ownership is derived only from the verified Supabase access token.
   if (Object.hasOwn(body, 'owner_id') || Object.hasOwn(body, 'owner_key')) {
     return jsonError('owner_fields_not_accepted', traceId, 400)
+  }
+  if (Object.hasOwn(body, 'device_id')) {
+    return jsonError('identity_fields_not_accepted', traceId, 400)
   }
 
   const source = typeof body.source === 'string' ? body.source.trim() : ''
@@ -210,17 +225,16 @@ async function handleUserPost(traceId, { supabase, userId }, body, idempotencyKe
     if (!house) return jsonError('house_not_owned_by_user', traceId, 403)
   }
 
-  const { data, error } = await supabase
-    .schema(SCHEMA)
-    .rpc('process_fact_event', {
-      p_owner_id: userId,
-      p_source: source,
-      p_fact_type: factType,
-      p_idempotency_key: idempotencyKey,
-      p_house_id: houseId,
-      p_occurred_at: occurredAt.toISOString(),
-      p_payload: payload,
-    })
+  const { data, error } = await supabase.schema(SCHEMA).rpc('process_fact_event', {
+    p_owner_id: userId,
+    p_device_id: null,
+    p_source: source,
+    p_fact_type: factType,
+    p_idempotency_key: idempotencyKey,
+    p_house_id: houseId,
+    p_occurred_at: occurredAt.toISOString(),
+    p_payload: payload,
+  })
 
   if (error) {
     if (error.code === '22023' && error.message?.includes('idempotency_key_reused')) {
@@ -233,7 +247,7 @@ async function handleUserPost(traceId, { supabase, userId }, body, idempotencyKe
   return Response.json({ data, traceId }, { status: data?.duplicate ? 200 : 201 })
 }
 
-async function handleWorkerPost(req, traceId, { supabase, deviceId, sourceCore }, body, idempotencyKey) {
+async function handleWorkerPost(req, traceId, context, body, idempotencyKey) {
   if (hasWorkerIdentityFields(body)) {
     return jsonError('worker_identity_fields_not_accepted', traceId, 400)
   }
@@ -241,18 +255,72 @@ async function handleWorkerPost(req, traceId, { supabase, deviceId, sourceCore }
     return jsonError('worker_house_id_not_accepted', traceId, 400)
   }
 
+  if (isMessageEnvelope(body)) {
+    return handleWorkerMessagePost(traceId, context, body, idempotencyKey)
+  }
+  return handleWorkerFactPost(traceId, context, body, idempotencyKey)
+}
+
+async function handleWorkerFactPost(traceId, { supabase, deviceId, sourceCore }, body, idempotencyKey) {
+  const source = typeof body.source === 'string' ? body.source.trim() : ''
+  const factType = typeof body.fact_type === 'string' ? body.fact_type.trim() : ''
+  const occurredAt = typeof body.occurred_at === 'string' ? new Date(body.occurred_at) : null
+  const payload = body.payload ?? {}
+
+  if (!SOURCE_RE.test(source) || !FACT_TYPE_RE.test(factType)) {
+    return jsonError('source_and_fact_type_required', traceId, 400)
+  }
+  if (sourceCore && source !== sourceCore && source.toLowerCase() !== String(sourceCore).toLowerCase()) {
+    if (String(sourceCore).toLowerCase() === 'corering' && source !== 'CoreRing') {
+      return jsonError('worker_source_not_allowed', traceId, 403)
+    }
+  }
+  if (!occurredAt || !Number.isFinite(occurredAt.getTime())) {
+    return jsonError('valid_occurred_at_required', traceId, 400)
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return jsonError('payload_must_be_an_object', traceId, 400)
+  }
+
+  const { data, error } = await supabase.schema(SCHEMA).rpc('process_fact_event', {
+    p_owner_id: null,
+    p_device_id: deviceId,
+    p_source: source,
+    p_fact_type: factType,
+    p_idempotency_key: idempotencyKey,
+    p_house_id: null,
+    p_occurred_at: occurredAt.toISOString(),
+    p_payload: payload,
+  })
+
+  if (error) {
+    if (error.code === '22023' && error.message?.includes('idempotency_key_reused')) {
+      return jsonError('idempotency_key_reused_with_different_event', traceId, 409)
+    }
+    if (error.code === '22023' && error.message?.includes('principal_required')) {
+      return jsonError('principal_required', traceId, 400)
+    }
+    if (error.code === '22023' && error.message?.includes('house_not_supported')) {
+      return jsonError('house_not_supported_for_device_principal', traceId, 400)
+    }
+    console.error('[corehub/facts] device fact processing failed', traceId, error.code)
+    return jsonError('fact_processing_failed_retry_with_same_key', traceId, 503)
+  }
+
+  return Response.json({ data, traceId }, { status: data?.duplicate ? 200 : 201 })
+}
+
+async function handleWorkerMessagePost(traceId, { supabase, deviceId, sourceCore }, body, idempotencyKey) {
   const source = typeof body.source === 'string' ? body.source.trim() : ''
   const eventType = typeof body.event_type === 'string' ? body.event_type.trim() : ''
   const eventId = typeof body.event_id === 'string' ? body.event_id.trim() : ''
-  const sourceRecordId = typeof body.source_record_id === 'string'
-    ? body.source_record_id.trim()
-    : ''
+  const sourceRecordId =
+    typeof body.source_record_id === 'string' ? body.source_record_id.trim() : ''
   const sourceRevision = body.source_revision
   const occurredAt = typeof body.occurred_at === 'string' ? new Date(body.occurred_at) : null
   const payload = body.payload
-  const payloadSha256 = typeof body.payload_sha256 === 'string'
-    ? body.payload_sha256.trim()
-    : ''
+  const payloadSha256 =
+    typeof body.payload_sha256 === 'string' ? body.payload_sha256.trim() : ''
 
   if (source !== sourceCore || !SOURCE_RE.test(source)) {
     return jsonError('worker_source_not_allowed', traceId, 403)
@@ -276,19 +344,17 @@ async function handleWorkerPost(req, traceId, { supabase, deviceId, sourceCore }
     return jsonError('valid_payload_sha256_required', traceId, 400)
   }
 
-  const { data, error } = await supabase
-    .schema(SCHEMA)
-    .rpc('process_device_fact_event', {
-      p_device_id: deviceId,
-      p_source: source,
-      p_event_type: eventType,
-      p_event_id: eventId,
-      p_source_record_id: sourceRecordId,
-      p_source_revision: sourceRevision,
-      p_occurred_at: occurredAt.toISOString(),
-      p_payload: payload,
-      p_payload_sha256: payloadSha256,
-    })
+  const { data, error } = await supabase.schema(SCHEMA).rpc('process_device_fact_event', {
+    p_device_id: deviceId,
+    p_source: source,
+    p_event_type: eventType,
+    p_event_id: eventId,
+    p_source_record_id: sourceRecordId,
+    p_source_revision: sourceRevision,
+    p_occurred_at: occurredAt.toISOString(),
+    p_payload: payload,
+    p_payload_sha256: payloadSha256,
+  })
 
   if (error) {
     if (error.code === '42501') return jsonError('worker_device_scope_denied', traceId, 403)
