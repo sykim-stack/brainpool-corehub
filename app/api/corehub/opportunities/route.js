@@ -6,6 +6,7 @@
 export const dynamic = 'force-dynamic'
 
 import { resolveOwnerKeysFromBearer } from '@/lib/corehub/resolveOwnerKeysFromBearer'
+import { errorPayload } from '@/lib/corehub/opportunities-contract.mjs'
 
 const SCHEMA = 'corehub'
 
@@ -24,8 +25,13 @@ const OWNER_FIELD_KEYS = [
 ]
 
 function json(body, status, traceId) {
+  const code = body?.error || body?._error
+  const payload = { ...body, traceId }
+  if (code) {
+    Object.assign(payload, errorPayload(code))
+  }
   return Response.json(
-    { ...body, traceId },
+    payload,
     { status, headers: CORS_HEADERS },
   )
 }

@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test:p4": "node --test test/*.test.mjs",
+    "test:p4:e2e": "node test/p4-staging.e2e.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.2",
