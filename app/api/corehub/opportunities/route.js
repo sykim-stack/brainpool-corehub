@@ -7,6 +7,13 @@ export const dynamic = 'force-dynamic'
 
 import { resolveOwnerKeysFromBearer } from '@/lib/corehub/resolveOwnerKeysFromBearer'
 import { errorPayload } from '@/lib/corehub/opportunities-contract.mjs'
+import { authenticateCoreRingRequest } from '@/lib/corehub/verifyCoreRingP4Assertion.mjs'
+import { createCoreRingP4VerifierDependencies } from '@/lib/corehub/core-ring-p4-adapter.mjs'
+import {
+  getCoreRingP4Config,
+  isCoreRingP4Configured,
+  looksLikeCoreRingP4Assertion,
+} from '@/lib/corehub/core-ring-p4-request.mjs'
 
 const SCHEMA = 'corehub'
 
@@ -102,6 +109,37 @@ async function handler(req) {
   const supabase = getSupabase()
   if (!supabase) {
     return json({ error: 'supabase_init_failed' }, 500, traceId)
+  }
+
+  const authorization = req.headers.get('authorization') || ''
+  if (looksLikeCoreRingP4Assertion(authorization)) {
+    if (!isCoreRingP4Configured()) {
+      return json({ error: 'p4_assertion_not_configured' }, 503, traceId)
+    }
+
+    const p4Config = getCoreRingP4Config()
+    const dependencies = createCoreRingP4VerifierDependencies({
+      supabase,
+      issuer: p4Config.issuer,
+      kid: p4Config.kid,
+      publicKey: p4Config.publicKey,
+    })
+    const verified = await authenticateCoreRingRequest({
+      headers: { authorization },
+      body,
+      traceId,
+      ...dependencies,
+    })
+    if (!verified.ok) {
+      return json(verified.body, verified.status, traceId)
+    }
+
+    const ownerKeys = [verified.principal.ownerKey]
+    const meta = { owner_linked: true, auth: 'corering_p4_assertion' }
+    if (req.method === 'GET') {
+      return handleGet(supabase, url, ownerKeys, meta, traceId)
+    }
+    return handlePatch(supabase, url, body || {}, ownerKeys, meta, traceId)
   }
 
   const userResult = await getUserFromRequest(req, supabase)
