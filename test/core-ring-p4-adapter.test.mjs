@@ -4,9 +4,12 @@ import test from 'node:test';
 import {
   REPLAY_RPC,
   createCoreNullOwnerResolver,
+  createCoreNullOwnerLinkSnapshotProvider,
   createCoreRingP4KeyRegistry,
   createCoreRingP4VerifierDependencies,
   createSupabaseReplayLedger,
+  OWNER_LINK_SNAPSHOT_COLUMNS,
+  OWNER_LINK_SNAPSHOT_TABLE,
 } from '../lib/corehub/core-ring-p4-adapter.mjs';
 
 const { publicKey } = generateKeyPairSync('ed25519');
@@ -71,6 +74,89 @@ test('Owner resolver returns unresolved for an unknown binding', async () => {
 test('Owner resolver fails closed when the mapping query fails', async () => {
   const resolver = createCoreNullOwnerResolver(fakeOwnerSupabase({ data: null, error: new Error('db down') }));
   assert.deepEqual(await resolver.resolve({ ownerKey: 'owner-a' }), { kind: 'unavailable' });
+});
+
+test('owner-link snapshot adapter performs a bounded read with server-owned filters', async () => {
+  const calls = [];
+  const snapshot = { source: 'corenull', snapshot_id: 'snapshot-1' };
+  const provider = createCoreNullOwnerLinkSnapshotProvider({
+    from(table) {
+      calls.push({ table });
+      return {
+        select(columns) {
+          calls.push({ columns });
+          return this;
+        },
+        eq(field, value) {
+          calls.push({ field, value });
+          return this;
+        },
+        limit(value) {
+          calls.push({ limit: value });
+          return Promise.resolve({ data: [snapshot], error: null });
+        },
+      };
+    },
+  });
+
+  assert.deepEqual(
+    await provider.resolve({ subject: 'subject-1', sessionId: 'session-1', ownerKey: 'owner-1' }),
+    snapshot,
+  );
+  assert.deepEqual(calls, [
+    { table: OWNER_LINK_SNAPSHOT_TABLE },
+    { columns: OWNER_LINK_SNAPSHOT_COLUMNS },
+    { field: 'subject', value: 'subject-1' },
+    { field: 'session_id', value: 'session-1' },
+    { field: 'owner_key', value: 'owner-1' },
+    { limit: 2 },
+  ]);
+});
+
+test('owner-link snapshot adapter returns null for no matching snapshot', async () => {
+  const provider = createCoreNullOwnerLinkSnapshotProvider({
+    from() {
+      return {
+        select() { return this; },
+        eq() { return this; },
+        limit() { return Promise.resolve({ data: [], error: null }); },
+      };
+    },
+  });
+  assert.equal(
+    await provider.resolve({ subject: 'subject-1', sessionId: 'session-1', ownerKey: 'owner-1' }),
+    null,
+  );
+});
+
+test('owner-link snapshot adapter fails closed on ambiguity or read error', async () => {
+  const ambiguous = createCoreNullOwnerLinkSnapshotProvider({
+    from() {
+      return {
+        select() { return this; },
+        eq() { return this; },
+        limit() { return Promise.resolve({ data: [{}, {}], error: null }); },
+      };
+    },
+  });
+  await assert.rejects(
+    ambiguous.resolve({ subject: 'subject-1', sessionId: 'session-1', ownerKey: 'owner-1' }),
+    /ambiguous/,
+  );
+
+  const unavailable = createCoreNullOwnerLinkSnapshotProvider({
+    from() {
+      return {
+        select() { return this; },
+        eq() { return this; },
+        limit() { return Promise.resolve({ data: null, error: new Error('db down') }); },
+      };
+    },
+  });
+  await assert.rejects(
+    unavailable.resolve({ subject: 'subject-1', sessionId: 'session-1', ownerKey: 'owner-1' }),
+    /query failed/,
+  );
 });
 
 test('verifier dependency factory keeps owner-link enforcement opt-in', () => {

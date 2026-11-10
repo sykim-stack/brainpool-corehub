@@ -131,6 +131,26 @@ OwnerLinkSnapshotProvider.resolve({
 
 실제 materialized view, 동기화 job, RLS, 네트워크 transport는 이 인터페이스 뒤의 별도 작업으로 남긴다.
 
+### 3.4 Read-only materialized snapshot adapter
+
+현재 설계한 read-only adapter의 source는 승인 전제의 `corenull_owner_link_snapshots`이며, 다음 조건으로 최대 2건만 조회한다.
+
+```text
+subject = verified subject
+and session_id = verified sessionId
+and owner_key = server-owned ownerKey
+limit 2
+```
+
+adapter 계약은 다음과 같다.
+
+- 0건이면 `null`을 반환한다.
+- 정확히 1건이면 snapshot provider wrapper가 schema를 검증한 뒤 반환한다.
+- 2건이면 동일 identity에 대한 ambiguity이므로 throw하고 verifier에서 503으로 fail-closed 한다.
+- query error, missing Supabase client, malformed result는 모두 성공으로 취급하지 않는다.
+- adapter는 `insert/update/delete/upsert`를 호출하지 않으며, table 생성·migration·CoreNull 호출도 수행하지 않는다.
+- 현재 dependency factory에는 자동 연결하지 않는다. 실제 table schema와 RLS 승인 전에는 기존 route 동작을 변경하지 않는다.
+
 ## 4. 판정 순서
 
 CoreHub의 목표 판정 순서는 다음과 같다. 순서는 정보 노출과 우회 가능성을 줄이기 위해 고정한다.
