@@ -101,6 +101,35 @@ OwnerLinkFreshnessSnapshot {
 - 동일한 `(session_id, link_id)`에 대해 더 오래된 `observed_at`/revision 상태를 새 상태로 덮어쓰지 않는다. opaque revision 문자열을 사전식 비교하지 않는다.
 - owner binding, session, link의 조합이 맞지 않거나 여러 후보가 있으면 `conflict`로 fail-closed 한다.
 
+### 3.3 Server-owned snapshot provider 입력 인터페이스
+
+실제 CoreNull 연결 전에 provider 경계를 다음으로 고정한다.
+
+```text
+OwnerLinkSnapshotProvider.resolve({
+  subject: string,    // verified assertion sub
+  sessionId: string,  // verified assertion session_id
+  ownerKey: string,   // existing server-side owner resolver result
+}) -> Promise<OwnerLinkFreshnessSnapshot | null>
+```
+
+계약 규칙:
+
+- 입력은 verifier가 검증한 값만 사용한다. request body/query의 `owner_key`, `device_id`, `provider_sub`를 provider 입력으로 전달하지 않는다.
+- provider는 `now`를 받지 않는다. 시간 판정은 CoreHub verifier가 명시적으로 전달한 `now`로 수행해 provider와 verifier의 clock 책임을 분리한다.
+- `null`은 server-owned snapshot이 없음을 뜻하며 allow가 아니다. 현재 정책에서는 unresolved/fail-closed로 분류한다.
+- 반환 snapshot은 `source = corenull`, `snapshot_id`, 상태 enum, timestamp, session/link/binding/revision을 모두 포함해야 한다.
+- provider 오류와 snapshot contract 위반은 `identity_verification_unavailable`(503)로 변환한다. raw storage error를 client에 반환하지 않는다.
+- 이번 단계의 provider wrapper는 입력·출력을 검증할 뿐이며 HTTP, Supabase, CoreNull 호출을 수행하지 않는다.
+
+테스트 double은 다음 세 가지를 결정적으로 주입한다.
+
+1. 호출 인자 기록: `subject/sessionId/ownerKey`만 전달됐는지 검증
+2. 정상 snapshot 또는 `null` 반환: active/revoked/expired/stale fixture 선택
+3. provider 장애 throw: 503 변환 및 replay 전 차단 검증
+
+실제 materialized view, 동기화 job, RLS, 네트워크 transport는 이 인터페이스 뒤의 별도 작업으로 남긴다.
+
 ## 4. 판정 순서
 
 CoreHub의 목표 판정 순서는 다음과 같다. 순서는 정보 노출과 우회 가능성을 줄이기 위해 고정한다.
