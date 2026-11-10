@@ -121,6 +121,7 @@ OwnerLinkSnapshotProvider.resolve({
 - 반환 snapshot은 `source = corenull`, `snapshot_id`, 상태 enum, timestamp, session/link/binding/revision을 모두 포함해야 한다.
 - provider 오류와 snapshot contract 위반은 `identity_verification_unavailable`(503)로 변환한다. raw storage error를 client에 반환하지 않는다.
 - 이번 단계의 provider wrapper는 입력·출력을 검증할 뿐이며 HTTP, Supabase, CoreNull 호출을 수행하지 않는다.
+- P4 dependency factory는 `ownerLinkResolver`를 선택적으로 받아 provider wrapper로 감싼다. 인자를 생략하면 기존 verifier dependencies와 route 동작은 그대로 유지된다.
 
 테스트 double은 다음 세 가지를 결정적으로 주입한다.
 
