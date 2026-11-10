@@ -7,6 +7,8 @@ import {
 } from '../lib/corehub/verifyCoreRingP4Assertion.mjs';
 
 const NOW = 2_000_000_000;
+const NOW_ISO = new Date(NOW * 1000).toISOString();
+const FRESH_UNTIL_ISO = new Date((NOW + 30) * 1000).toISOString();
 const CONFIG = {
   issuer: 'https://identity.corering.test',
   audience: 'corehub-p4',
@@ -82,6 +84,153 @@ test('valid assertion returns a verified server principal', async () => {
   assert.equal(result.scheme, 'corering-p4-assertion');
   assert.equal(result.ownerKey, 'owner_test_verified');
   assert.equal(result.expiresAt, NOW + 45);
+});
+
+test('injected fresh owner-link snapshot allows access before replay consume', async () => {
+  const events = [];
+  const shared = deps();
+  const consume = shared.replayLedger.consume;
+  shared.replayLedger.consume = async (...args) => {
+    events.push('replay');
+    return consume(...args);
+  };
+  const result = await authenticateCoreRingRequest(options(makeToken({
+    claims: { link_id: 'link-1', link_revision: 'rev-2' },
+  }), {
+    ...shared,
+    ownerLinkResolver: {
+      async resolve() {
+        events.push('owner-link');
+        return {
+          source: 'corenull',
+          observed_at: NOW_ISO,
+          fresh_until: FRESH_UNTIL_ISO,
+          session_id: 'sess_test_opaque',
+          session_status: 'active',
+          session_revoked_at: null,
+          link_id: 'link-1',
+          link_revision: 'rev-2',
+          owner_binding: 'owner_test_verified',
+          link_status: 'active',
+          link_expires_at: new Date((NOW + 60) * 1000).toISOString(),
+        };
+      },
+    },
+  }));
+  assert.equal(result.ok, true);
+  assert.deepEqual(events, ['owner-link', 'replay']);
+});
+
+test('stale owner-link state returns 503 and does not consume replay jti', async () => {
+  const events = [];
+  const shared = deps();
+  const consume = shared.replayLedger.consume;
+  shared.replayLedger.consume = async (...args) => {
+    events.push('replay');
+    return consume(...args);
+  };
+  const result = await authenticateCoreRingRequest(options(makeToken({
+    claims: { link_id: 'link-1', link_revision: 'rev-2' },
+  }), {
+    ...shared,
+    ownerLinkResolver: {
+      async resolve() {
+        events.push('owner-link');
+        return {
+          source: 'corenull',
+          observed_at: NOW_ISO,
+          fresh_until: NOW_ISO,
+          session_id: 'sess_test_opaque',
+          session_status: 'active',
+          session_revoked_at: null,
+          link_id: 'link-1',
+          link_revision: 'rev-2',
+          owner_binding: 'owner_test_verified',
+          link_status: 'active',
+          link_expires_at: new Date((NOW + 60) * 1000).toISOString(),
+        };
+      },
+    },
+  }));
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 503);
+  assert.equal(result.body.error, 'owner_link_state_stale');
+  assert.equal(result.body.error, result.body._error);
+  assert.deepEqual(events, ['owner-link']);
+});
+
+test('revoked owner-link state returns 401 before replay consume', async () => {
+  const events = [];
+  const shared = deps();
+  const consume = shared.replayLedger.consume;
+  shared.replayLedger.consume = async (...args) => {
+    events.push('replay');
+    return consume(...args);
+  };
+  const result = await authenticateCoreRingRequest(options(makeToken({
+    claims: { link_id: 'link-1', link_revision: 'rev-2' },
+  }), {
+    ...shared,
+    ownerLinkResolver: {
+      async resolve() {
+        events.push('owner-link');
+        return {
+          source: 'corenull',
+          observed_at: NOW_ISO,
+          fresh_until: FRESH_UNTIL_ISO,
+          session_id: 'sess_test_opaque',
+          session_status: 'revoked',
+          session_revoked_at: NOW_ISO,
+          link_id: 'link-1',
+          link_revision: 'rev-2',
+          owner_binding: 'owner_test_verified',
+          link_status: 'active',
+          link_expires_at: new Date((NOW + 60) * 1000).toISOString(),
+        };
+      },
+    },
+  }));
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 401);
+  assert.equal(result.body.error, 'session_revoked');
+  assert.deepEqual(events, ['owner-link']);
+});
+
+test('expired owner-link state returns 403 before replay consume', async () => {
+  const events = [];
+  const shared = deps();
+  const consume = shared.replayLedger.consume;
+  shared.replayLedger.consume = async (...args) => {
+    events.push('replay');
+    return consume(...args);
+  };
+  const result = await authenticateCoreRingRequest(options(makeToken({
+    claims: { link_id: 'link-1', link_revision: 'rev-2' },
+  }), {
+    ...shared,
+    ownerLinkResolver: {
+      async resolve() {
+        events.push('owner-link');
+        return {
+          source: 'corenull',
+          observed_at: NOW_ISO,
+          fresh_until: FRESH_UNTIL_ISO,
+          session_id: 'sess_test_opaque',
+          session_status: 'active',
+          session_revoked_at: null,
+          link_id: 'link-1',
+          link_revision: 'rev-2',
+          owner_binding: 'owner_test_verified',
+          link_status: 'active',
+          link_expires_at: NOW_ISO,
+        };
+      },
+    },
+  }));
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 403);
+  assert.equal(result.body.error, 'owner_link_expired');
+  assert.deepEqual(events, ['owner-link']);
 });
 
 test('wrong issuer is rejected', async () => {

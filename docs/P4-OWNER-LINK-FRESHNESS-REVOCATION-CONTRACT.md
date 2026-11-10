@@ -117,6 +117,18 @@ CoreHub의 목표 판정 순서는 다음과 같다. 순서는 정보 노출과 
 9. owner-scoped resource query 실행
 ```
 
+현재 R1 순수 verifier 초안에서 `ownerLinkResolver`를 주입한 경우의 실제 순서는 다음과 같다.
+
+```text
+verified assertion
+  → existing ownerResolver
+  → injected ownerLinkResolver / freshness decision
+  → replay consume
+  → verified principal
+```
+
+따라서 stale/revoked/expired 상태는 replay `jti`를 소비하기 전에 차단되고, fresh active snapshot만 replay consume으로 진행한다. 기존 opportunities route는 아직 이 선택적 resolver를 주입하지 않으므로 route의 R3 동작은 변하지 않는다.
+
 실패 시 client가 제출한 owner 정보나 내부 상태를 응답에 반영하지 않고 기존 safe error envelope를 사용한다.
 
 권장 오류 분류는 다음과 같다.
@@ -232,9 +244,9 @@ session: active → revoked
 | 서명/issuer/시간 claim | verifier에서 확인 | 유지 |
 | `(issuer, jti)` replay | atomic ledger consume | 유지 |
 | identity mapping 존재 | CoreNull identity row 존재 시 binding 통과 | freshness snapshot의 link/session 상태까지 확인 |
-| CoreNull session revoke | CoreHub에서 조회하지 않음 | 최신 상태가 revoked면 즉시 deny |
+| CoreNull session revoke | route에 resolver 미주입; R3에서는 조회하지 않음 | resolver 연결 시 최신 상태가 revoked면 replay 전 deny |
 | owner-link expiry | 별도 hard expiry 판정 없음 | `now >= link_expires_at`이면 deny |
-| stale 상태 | 별도 상태 없음 | stale이면 보호 자원 fail-closed |
+| stale 상태 | route에 resolver 미주입; 별도 상태 없음 | resolver 연결 시 replay 전 fail-closed |
 | identities row 삭제 | `unresolved`가 될 수 있음 | `session_revoked`로 오인하지 않음; 원인 분리 |
 | 익명 owner 정책 | 현재 B-1 unresolved, 제품 정책 미확정 | 이 note에서 허용하지 않음; 별도 제품 결정 필요 |
 
@@ -249,8 +261,8 @@ session: active → revoked
 1. CoreHub가 사용할 snapshot/materialized state의 저장 위치와 동기화 주기 결정
 2. CoreNull이 revoke/expiry 변경을 발행·반영하는 단방향 동기화 방식 결정
 3. `owner_link_state_stale`의 503 envelope는 이 note의 확정 정책을 그대로 구현
-4. verifier/adapter에 snapshot resolver와 monotonic revision 검증 추가
-5. revoke·expiry·stale·out-of-order update의 negative tests 추가
+4. 기존 opportunities route에 server-owned snapshot resolver를 실제 주입할지 승인
+5. resolver 주입 route에 대한 resource access 통합 테스트 추가
 6. migration, RLS, cleanup, deploy 및 staging/production rollout 승인
 
 직접 CoreHub→CoreNull HTTP 호출을 추가하는 것은 이 계약의 기본안이 아니다. 호출이 필요하다고 판단되면 latency, timeout, fail-open 여부, 인증 주체, 재시도, replay와의 순서를 별도 ADR로 승인해야 한다.
