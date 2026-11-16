@@ -142,9 +142,9 @@ declare
   v_confidence double precision;
   v_strength double precision;
   v_opportunity_type text;
-  v_action_type text;
   v_priority text;
-  v_message text;
+  v_message_refs jsonb;
+  v_proposal_payload jsonb;
   v_expires interval;
   v_dedupe_key text;
   v_ids_key text;
@@ -233,9 +233,7 @@ begin
       v_meaning_type := 'goal.achieved';
       v_confidence := 0.95;
       v_opportunity_type := 'celebrate.achievement';
-      v_action_type := 'trigger.hajunai.celebrate';
       v_priority := 'high';
-      v_message := '씨앗이 열매가 됐어요 🍎';
       v_expires := interval '72 hours';
     end if;
   end if;
@@ -266,9 +264,7 @@ begin
       v_meaning_type := 'new.relationship.forming';
       v_confidence := 0.8;
       v_opportunity_type := 'suggest.translation.help';
-      v_action_type := 'suggest.corering';
       v_priority := 'medium';
-      v_message := '번역 도움이 필요하신가요?';
       v_expires := interval '48 hours';
     end if;
   end if;
@@ -299,14 +295,42 @@ begin
       v_meaning_type := 'seed.at.risk';
       v_confidence := 0.72;
       v_opportunity_type := 'nudge.seed.owner';
-      v_action_type := 'trigger.hajunai.nudge';
       v_priority := 'high';
-      v_message := '씨앗이 기다리고 있어요';
       v_expires := interval '24 hours';
     end if;
   end if;
 
   if v_first_fact_id is not null then
+    -- Build one consumer-neutral proposal. CoreHub passes only source references
+    -- and the derived meaning; it never chooses a consumer or authors a sentence.
+    select coalesce(
+      jsonb_agg(
+        jsonb_build_object(
+          'message_id', refs.message_id,
+          'message_source', refs.message_source
+        )
+        order by refs.message_source, refs.message_id
+      ),
+      '[]'::jsonb
+    )
+    into v_message_refs
+    from (
+      select distinct
+        nullif(btrim(f.payload ->> 'message_id'), '') as message_id,
+        nullif(btrim(f.payload ->> 'message_source'), '') as message_source
+      from corehub.facts f
+      where f.id = any(array[v_first_fact_id, v_second_fact_id])
+        and nullif(btrim(f.payload ->> 'message_id'), '') is not null
+        and nullif(btrim(f.payload ->> 'message_source'), '') is not null
+    ) refs;
+
+    v_proposal_payload := jsonb_build_object(
+      'meaning_type', v_meaning_type,
+      'confidence', v_confidence,
+      'fact_ids', to_jsonb(array[v_first_fact_id, v_second_fact_id]),
+      'references', coalesce(v_message_refs, '[]'::jsonb)
+    );
+
     select string_agg(id::text, ':' order by id::text)
       into v_ids_key
     from unnest(array[v_first_fact_id, v_second_fact_id]) as ids(id);
@@ -347,7 +371,7 @@ begin
       priority, action_type, payload, is_consumed, expires_at
     ) values (
       v_opportunity_type, v_meaning_id, null, p_owner_id,
-      v_priority, v_action_type, jsonb_build_object('message', v_message),
+      v_priority, 'proposal', v_proposal_payload,
       false, now() + v_expires
     )
     on conflict (source_meaning_id, opportunity_type)
