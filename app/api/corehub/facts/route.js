@@ -180,26 +180,25 @@ const generateMeaning = async (supabase, connection, facts) => {
 }
 
 const generateOpportunity = async (supabase, meaning) => {
+  // A-4 (2026-11-16 사람 확정): CoreHub은 소비자를 지정하지 않고 문구도 창작하지 않는다.
+  //  - 제거: action_type (trigger.hajunai.* / suggest.corering = 소비자 행동 지정)
+  //  - 제거: payload.message (표시 문구 창작)
+  //  - 남김: 제안 종류 · 우선순위 · 만료 (연결을 위한 "표현"만)
+  //  - 각 Core는 자기 영역에서 자기 라벨을 붙인다. 소비자별 분기 금지 = 공통 제안 1건.
   const opportunityMap = {
     'seed.at.risk': {
       opportunity_type: 'nudge.seed.owner',
-      action_type: 'trigger.hajunai.nudge',
       priority: 'high',
-      payload: { message: '씨앗이 기다리고 있어요' },
       expires_hours: 24,
     },
     'new.relationship.forming': {
       opportunity_type: 'suggest.translation.help',
-      action_type: 'suggest.corering',
       priority: 'medium',
-      payload: { message: '번역 도움이 필요하신가요?' },
       expires_hours: 48,
     },
     'goal.achieved': {
       opportunity_type: 'celebrate.achievement',
-      action_type: 'trigger.hajunai.celebrate',
       priority: 'high',
-      payload: { message: '씨앗이 열매가 됐어요 🍎' },
       expires_hours: 72,
     },
   }
@@ -207,7 +206,8 @@ const generateOpportunity = async (supabase, meaning) => {
   const opportunity = opportunityMap[meaning.meaning_type]
   if (!opportunity) return
 
-  await supabase
+  // A-4 (2026-11-16 사람 확정): action_type(소비자 지정)·payload(문구 창작)를 쓰지 않는다.
+  const { error: insertError } = await supabase
     .schema(SCHEMA)
     .from('opportunities')
     .insert({
@@ -215,10 +215,14 @@ const generateOpportunity = async (supabase, meaning) => {
       source_meaning_id: meaning.id,
       target_owner_key: meaning.owner_key,
       priority: opportunity.priority,
-      action_type: opportunity.action_type,
-      payload: opportunity.payload,
       expires_at: new Date(Date.now() + opportunity.expires_hours * 60 * 60 * 1000).toISOString(),
     })
+
+  if (insertError) {
+    // 조용한 실패 방지: action_type 컬럼이 NOT NULL 이면 여기서 드러난다 (검증 항목)
+    console.error(`[corehub/opportunity] insert failed type=${opportunity.opportunity_type} err=${insertError.message}`)
+    return
+  }
 
   console.log(`[corehub/opportunity] created type=${opportunity.opportunity_type} expires_hours=${opportunity.expires_hours}`)
 }

@@ -19,7 +19,8 @@ const SCHEMA = 'corehub'
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, PATCH, OPTIONS',
+  // A-4/33: 소비 처리(PATCH) 폐지 — 조회만 허용한다
+  'Access-Control-Allow-Methods': 'GET, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 }
 
@@ -80,21 +81,21 @@ async function handler(req) {
     return new Response(null, { status: 204, headers: CORS_HEADERS })
   }
 
-  if (req.method !== 'GET' && req.method !== 'PATCH') {
+  // A-4/33 (2026-11-16 사람 확정): 소비자 → Hub 소비 처리(PATCH)를 폐지한다.
+  //  - 소비는 조회다. 소비자별 상태(읽었다/처리했다)는 소비자 자기 공간에 둔다.
+  //  - 라우트는 거부(405)하고, is_consumed/consumed_at 컬럼은 미사용 표기로 남긴다(삭제는 한 단계 늦춤).
+  if (req.method === 'PATCH') {
+    return json({ error: 'consume_not_supported' }, 405, traceId)
+  }
+
+  if (req.method !== 'GET') {
     return json({ error: 'method_not_allowed' }, 405, traceId)
   }
 
   const url = new URL(req.url)
 
-  let body = null
-  if (req.method === 'PATCH') {
-    try {
-      const text = await req.text()
-      body = text ? JSON.parse(text) : {}
-    } catch {
-      return json({ error: 'invalid_json' }, 400, traceId)
-    }
-  }
+  // PATCH 본문 파싱은 폐지됐다 (조회 경로는 body를 쓰지 않는다)
+  const body = null
 
   if (hasOwnerFieldClaims(url, body)) {
     return json({ error: 'owner_fields_not_accepted' }, 400, traceId)
@@ -136,10 +137,8 @@ async function handler(req) {
 
     const ownerKeys = [verified.principal.ownerKey]
     const meta = { owner_linked: true, auth: 'corering_p4_assertion' }
-    if (req.method === 'GET') {
-      return handleGet(supabase, url, ownerKeys, meta, traceId)
-    }
-    return handlePatch(supabase, url, body || {}, ownerKeys, meta, traceId)
+    // PATCH는 위에서 405로 거부되므로 여기 도달하는 것은 GET뿐이다
+    return handleGet(supabase, url, ownerKeys, meta, traceId)
   }
 
   const userResult = await getUserFromRequest(req, supabase)
@@ -158,10 +157,8 @@ async function handler(req) {
   const { ownerKeys, owner_linked } = resolved
   const meta = { owner_linked, auth: 'bearer' }
 
-  if (req.method === 'GET') {
-    return handleGet(supabase, url, ownerKeys, meta, traceId)
-  }
-  return handlePatch(supabase, url, body || {}, ownerKeys, meta, traceId)
+  // PATCH는 위에서 405로 거부되므로 여기 도달하는 것은 GET뿐이다
+  return handleGet(supabase, url, ownerKeys, meta, traceId)
 }
 
 async function handleGet(supabase, url, ownerKeys, meta, traceId) {
@@ -192,7 +189,7 @@ async function handleGet(supabase, url, ownerKeys, meta, traceId) {
     .from('opportunities')
     .select('*')
     .in('target_owner_key', ownerKeys)
-    .eq('is_consumed', false)
+    // A-4/33: 소비는 조회다 — is_consumed 로 거르지 않는다 (컬럼은 미사용 표기)
     .or(`expires_at.is.null,expires_at.gt.${now}`)
     .order('priority', { ascending: false })
     .order('created_at', { ascending: false })
@@ -201,6 +198,8 @@ async function handleGet(supabase, url, ownerKeys, meta, traceId) {
   return json({ data: data || [], meta }, 200, traceId)
 }
 
+// DEPRECATED (A-4/33, 2026-11-16): 소비 처리는 폐지됐다. dispatch가 PATCH를 405로 거부하므로
+// 이 함수에는 도달하지 않는다. 삭제는 한 단계 늦춘다(기존 리듬).
 async function handlePatch(supabase, url, body, ownerKeys, meta, traceId) {
   const targetId = body.opportunity_id || url.searchParams.get('id')
   if (!targetId) {

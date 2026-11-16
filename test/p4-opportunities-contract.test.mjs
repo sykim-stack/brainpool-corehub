@@ -38,6 +38,7 @@ test('관련 오류 코드 전체가 동일한 error/_error 값을 갖는다', (
     'opportunity_not_found',
     'query_failed',
     'id_required',
+    'consume_not_supported',
   ]
   for (const code of routeErrorCodes) {
     const payload = errorPayload(code)
@@ -71,14 +72,15 @@ test('HMAC 표식은 Bearer 경로로 흘려보내지 않는다', () => {
   assert.equal(isHmacRequest(bearer), false)
 })
 
-test('만료·소비 필터: 활성 미소비 데이터만 노출한다', () => {
+test('만료 필터: 미만료만 노출한다 (A-4/33 — is_consumed 는 미사용)', () => {
   const now = new Date('2026-11-04T00:00:00.000Z')
   assert.equal(isVisibleOpportunity({ is_consumed: false, expires_at: '2026-11-05T00:00:00.000Z' }, now), true)
   assert.equal(isVisibleOpportunity({ is_consumed: false, expires_at: '2026-11-03T23:59:59.000Z' }, now), false)
-  assert.equal(isVisibleOpportunity({ is_consumed: true, expires_at: '2026-11-05T00:00:00.000Z' }, now), false)
+  // 소비 표시가 있어도 가시성은 만료만 본다 — 소비자별 상태를 Hub은 알지 않는다(공통 제안 1건)
+  assert.equal(isVisibleOpportunity({ is_consumed: true, expires_at: '2026-11-05T00:00:00.000Z' }, now), true)
 })
 
-test('PATCH 경합 계약: 첫 소비 후 같은 행은 두 번째 소비 대상이 아니다', () => {
+test('[DEPRECATED 계약] PATCH 경합: 첫 소비 후 같은 행은 두 번째 소비 대상이 아니다 (소비 처리는 폐지됨 — A-4/33)', () => {
   const row = { id: 'opp-a', target_owner_key: 'owner-a', is_consumed: false }
   assert.equal(canConsumeOpportunity(row, ['owner-a']), true)
   row.is_consumed = true
