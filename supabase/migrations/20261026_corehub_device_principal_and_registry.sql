@@ -112,9 +112,9 @@ revoke all on function corehub.claim_device_nonce(text, text, timestamptz)
 grant execute on function corehub.claim_device_nonce(text, text, timestamptz)
   to service_role;
 
-drop function if exists corehub.process_fact_event(
-  uuid, text, text, text, uuid, timestamptz, jsonb
-);
+-- Keep the 7-argument authenticated-user RPC: the 8-argument overload
+-- delegates user principals to it so Connection/Meaning/Opportunity processing
+-- remains atomic. Device principals use the separate storage-only path below.
 
 drop function if exists corehub.process_fact_event(
   uuid, text, text, text, text, uuid, timestamptz, jsonb
@@ -159,61 +159,49 @@ begin
   end if;
 
   if p_owner_id is not null then
-    insert into corehub.facts (
-      source, fact_type, owner_id, owner_key, device_id, house_id,
-      occurred_at, payload, processed, idempotency_key
-    ) values (
-      p_source, p_fact_type, p_owner_id, null, v_device, p_house_id,
-      p_occurred_at, coalesce(p_payload, '{}'::jsonb), false, p_idempotency_key
-    )
-    on conflict (owner_id, source, idempotency_key)
-      where owner_id is not null and idempotency_key is not null
-    do nothing
-    returning id into v_fact_id;
-
-    if v_fact_id is null then
-      select * into v_existing from corehub.facts
-      where owner_id = p_owner_id and source = p_source
-        and idempotency_key = p_idempotency_key
-      for update;
-      if not found then
-        raise exception 'idempotency_record_not_found' using errcode = '40001';
-      end if;
-      if v_existing.fact_type is distinct from p_fact_type
-         or v_existing.payload is distinct from coalesce(p_payload, '{}'::jsonb) then
-        raise exception 'idempotency_key_reused_with_different_event' using errcode = '22023';
-      end if;
-      v_fact_id := v_existing.id;
-      v_duplicate := true;
+    if v_device is not null then
+      raise exception 'owner_and_device_principal_conflict' using errcode = '22023';
     end if;
-  else
-    insert into corehub.facts (
-      source, fact_type, owner_id, owner_key, device_id, house_id,
-      occurred_at, payload, processed, idempotency_key
-    ) values (
-      p_source, p_fact_type, null, null, v_device, null,
-      p_occurred_at, coalesce(p_payload, '{}'::jsonb), false, p_idempotency_key
-    )
-    on conflict (device_id, source, idempotency_key)
-      where device_id is not null and idempotency_key is not null
-    do nothing
-    returning id into v_fact_id;
 
-    if v_fact_id is null then
-      select * into v_existing from corehub.facts
-      where device_id = v_device and source = p_source
-        and idempotency_key = p_idempotency_key
-      for update;
-      if not found then
-        raise exception 'idempotency_record_not_found' using errcode = '40001';
-      end if;
-      if v_existing.fact_type is distinct from p_fact_type
-         or v_existing.payload is distinct from coalesce(p_payload, '{}'::jsonb) then
-        raise exception 'idempotency_key_reused_with_different_event' using errcode = '22023';
-      end if;
-      v_fact_id := v_existing.id;
-      v_duplicate := true;
+    return corehub.process_fact_event(
+      p_owner_id,
+      p_source,
+      p_fact_type,
+      p_idempotency_key,
+      p_house_id,
+      p_occurred_at,
+      coalesce(p_payload, '{}'::jsonb)
+    );
+  end if;
+
+  -- Device principal: retain the Fact for traceability, but do not create
+  -- owner-scoped Meaning/Opportunity rows without an authenticated Owner.
+  insert into corehub.facts (
+    source, fact_type, owner_id, owner_key, device_id, house_id,
+    occurred_at, payload, processed, idempotency_key
+  ) values (
+    p_source, p_fact_type, null, null, v_device, null,
+    p_occurred_at, coalesce(p_payload, '{}'::jsonb), false, p_idempotency_key
+  )
+  on conflict (device_id, source, idempotency_key)
+    where device_id is not null and idempotency_key is not null
+  do nothing
+  returning id into v_fact_id;
+
+  if v_fact_id is null then
+    select * into v_existing from corehub.facts
+    where device_id = v_device and source = p_source
+      and idempotency_key = p_idempotency_key
+    for update;
+    if not found then
+      raise exception 'idempotency_record_not_found' using errcode = '40001';
     end if;
+    if v_existing.fact_type is distinct from p_fact_type
+       or v_existing.payload is distinct from coalesce(p_payload, '{}'::jsonb) then
+      raise exception 'idempotency_key_reused_with_different_event' using errcode = '22023';
+    end if;
+    v_fact_id := v_existing.id;
+    v_duplicate := true;
   end if;
 
   if not v_duplicate then
