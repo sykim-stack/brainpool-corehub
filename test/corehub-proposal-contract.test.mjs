@@ -8,6 +8,11 @@ const migrationUrl = new URL(
   import.meta.url,
 )
 const sql = await readFile(migrationUrl, 'utf8')
+const deviceMigrationUrl = new URL(
+  '../supabase/migrations/20261026_corehub_device_principal_and_registry.sql',
+  import.meta.url,
+)
+const deviceSql = await readFile(deviceMigrationUrl, 'utf8')
 
 test('all derived meanings use one consumer-neutral proposal action', () => {
   const cases = [
@@ -44,4 +49,14 @@ test('connection, meaning, and opportunity layers have database dedupe constrain
   assert.match(sql, /on conflict \(dedupe_key\).*?do nothing/s)
   assert.match(sql, /on conflict \(source_connection_id\).*?do nothing/s)
   assert.match(sql, /on conflict \(source_meaning_id, opportunity_type\).*?do nothing/s)
+})
+
+test('device migration preserves authenticated-owner derivation RPC', () => {
+  assert.doesNotMatch(
+    deviceSql,
+    /drop function if exists corehub\.process_fact_event\([\s\S]*?uuid, text, text, text, uuid, timestamptz, jsonb\)/,
+  )
+  assert.match(deviceSql, /return corehub\.process_fact_event\(/)
+  assert.match(deviceSql, /Device principal: retain the Fact for traceability/)
+  assert.match(deviceSql, /create or replace function corehub\.process_device_fact_event\(/)
 })
