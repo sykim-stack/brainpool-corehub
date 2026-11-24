@@ -10,13 +10,14 @@
 | 문서 | 경로 (repo) | 한 줄 |
 |------|-------------|--------|
 | **ADR-HERMES-000** | `docs/corehub/ADR-HERMES-000-hermes-as-reassembly-layer.md` | Hermes = 독립 코어 아님. 조사·이해·분류·**제안**만. CoreHub가 Fact→Connection→Meaning→Opportunity 수행. 사람 결정. Meaning≠View. 재생성 경로 **미확인**. |
+| **ADR-CONFIRM-000** | `docs/corehub/ADR-CONFIRM-000-human-confirmation-vs-ai-adopted.md` | `adopted` ≠ `confirmed_by_human`. R1–R5. 자동 승격·백필 금지. 취소/재확정은 별도 결정. |
 | **PROCESS-ADR-approval** | `docs/corehub/PROCESS-ADR-approval-2026-11-24.md` | ADR Accepted = 원칙 잠금 ≠ 코드/DB/배포. 본문 직접 수정 금지(변경=새 ADR). 메타(상태·일자·근거)만 사람 명시 승인 시 갱신. |
 
-## 2. 아직 Proposed
+## 2. 문서 축 — 남은 열린 항목
 
-| 문서 | 경로 | 비고 |
-|------|------|------|
-| **ADR-CONFIRM-000** | `docs/corehub/ADR-CONFIRM-000-human-confirmation-vs-ai-adopted.md` | `adopted` ≠ `confirmed_by_human`. R1–R5. 사람 Accepted **대기**. 본문 확정 전 구현 착수 금지 권장. |
+| 항목 | 상태 |
+|------|------|
+| PR `docs/adr-hermes-confirm-process-2026-11-24` → main 병합 | **별도 명시 승인** 대기 |
 
 ## 3. 역할 경계 (절대 흐리지 말 것)
 
@@ -38,8 +39,8 @@
 
 | # | 작업 | 전제 |
 |---|------|------|
-| A | ADR-CONFIRM-000 사람 Accepted | Proposed 검토만 |
-| B | prior_decisions / Room Context가 `confirmed_by_human`만 쓰는지 **읽기 전용** 코드 감사 | CONFIRM Accepted 권장 |
+| A | ~~ADR-CONFIRM-000 Accepted~~ | **Done 2026-11-24** |
+| B | prior_decisions / Room Context가 `confirmed_by_human`만 쓰는지 **읽기 전용** 코드 감사 | CONFIRM Accepted 완료 → 착수 가능(사람 작업 승인 후) |
 | C | Meaning/Opportunity **재생성 경로** 존재 여부 조사 (구현 미확인 해소) | 조사만, 구현 아님 |
 | D | Hermes 운영 프롬프트 초안 (제안만, 실행 금지 문구 포함) | HERMES Accepted 이미 충족; 사람 작업 승인 후 |
 | E | ADR-CONFIRM Accepted 후 ORIGINAL-REF 관련 링크만 메타 갱신 여부 | 본문 수정 아님 |
@@ -56,7 +57,7 @@
 
 1. ADR-ORIGINAL-REF-000 (원본/참조 경계)  
 2. ADR-HERMES-000 (재조립 위치)  
-3. ADR-CONFIRM-000 (채택 vs 확정 — Accepted 후)  
+3. ADR-CONFIRM-000 (채택 vs 확정 — Accepted)  
 4. PROCESS-ADR-approval (승인 절차)  
 5. ADR-002 / ADR-SHARED-OWNER-001 (인증·Owner — 별 축)
 

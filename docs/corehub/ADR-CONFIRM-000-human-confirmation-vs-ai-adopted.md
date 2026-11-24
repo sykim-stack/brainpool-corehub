@@ -1,8 +1,10 @@
 # ADR-CONFIRM-000: Human Confirmation vs AI Adopted
 
-- **상태:** Proposed
+- **상태:** Accepted
+- **Accepted 일자:** 2026-11-24
 - **작성일:** 2026-11-24
 - **결정 소유:** 사람 (Human First)
+- **근거:** R5·confirmed_by 식별 경계 반영 후 열린 항목 마무리 승인
 - **관련:**
   - ADR-ORIGINAL-REF-000 (Accepted) — R3·R4, 승격 규칙
   - ADR-HERMES-000 (Accepted) — 제안 레이어, 자동 승격 금지
